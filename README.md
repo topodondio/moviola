@@ -97,7 +97,9 @@ Ripeti, Importa ed Esporta**.
 ### Impostazioni del progetto
 
 Pulsante con fps e risoluzione sulla barra della timeline (o Ctrl/Cmd+,):
-risoluzione, **fotogrammi al secondo** e bande nere su tutto il montaggio.
+risoluzione, **fotogrammi al secondo** e bande nere su tutto il montaggio
+(le bande su tutto il progetto si regolano anche in cima al pannello
+Effetti, sempre visibili).
 Gli fps del progetto sono quelli dell'anteprima della timeline e del video
 esportato; le clip con fps diversi vengono adattate ripetendo o saltando
 fotogrammi. Il visore sorgente mostra invece ogni clip ai suoi fps originali.
@@ -130,7 +132,11 @@ Tutte le scorciatoie: menu Aiuto → Scorciatoie (F1).
   MJPEG a 540p, velocissime da decodificare. Si creano in background e si
   possono creare a mano (clic destro → Crea proxy). L'export usa sempre gli
   originali.
-- Qualità anteprima regolabile (menu Vista).
+- **Risoluzione dell'anteprima separata da quella del progetto**: menu
+  «Anteprima» sopra al visore (Piena, 1/2, 1/3, 1/4, con i pixel effettivi).
+  Più è bassa, più la riproduzione è fluida; l'export resta alla risoluzione
+  del progetto (o a quella scelta nella finestra di esportazione). Fino a
+  540 righe l'anteprima usa i proxy, sopra legge gli originali.
 
 Proxy, audio decodificato e miniature stanno nella cartella cache
 (menu Aiuto → Cartella cache) e si possono cancellare in qualsiasi momento.

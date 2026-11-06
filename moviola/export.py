@@ -59,7 +59,7 @@ def _retime_expr(it, src_t, cs):
 
 
 def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=None, start=0.0, end=None,
-              text_renderer=None):
+              text_renderer=None, size=None):
     """Prepara LUT, scritte, mix audio e comando FFmpeg. Restituisce (cmd, workdir, durata).
 
     text_renderer(item, W, H, path) disegna una scritta in un PNG trasparente
@@ -71,7 +71,8 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
     if not exe:
         raise RuntimeError("FFmpeg non trovato.")
     workdir = workdir or tempfile.mkdtemp(prefix="moviola_export_")
-    W, H = project.size
+    W, H = size or project.size
+    W, H = int(W) - int(W) % 2, int(H) - int(H) % 2
     fps = project.fps
     segs = project.video_segments(start, end)
 

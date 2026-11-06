@@ -14,7 +14,13 @@ from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from . import audio, color
 from .decode import SourcePool
 
-QUALITY_HEIGHTS = {"piena": 1080, "meta": 540, "quarto": 360}
+# risoluzione dell'anteprima rispetto a quella del progetto (l'export usa sempre quella piena)
+PREVIEW_SCALES = {"piena": 1.0, "meta": 0.5, "terzo": 1 / 3, "quarto": 0.25}
+
+
+def preview_height(project_h: int, quality: str) -> int:
+    h = int(round(project_h * PREVIEW_SCALES.get(quality, 0.5)))
+    return max(144, h - h % 2)
 
 
 class Frame:
@@ -347,12 +353,11 @@ class Engine(QObject):
             label = src["id"]
         if src is None or not src.get("has_video"):
             return Frame(t, None, label=label)
-        path = self.path_for(src)
+        h = preview_height(pr.size[1], self.quality)
+        path = self.path_for(src, h)
         fs = self.pool.get(path)
         if fs is None:
             return Frame(t, None, label=label + " (file non trovato)")
-        h = QUALITY_HEIGHTS.get(self.quality, 540)
-        h = min(h, pr.size[1])
         img = fs.get(max(0.0, st), h)
         if img is None:
             return Frame(t, None, label=label)

@@ -39,15 +39,24 @@ class ExportDialog(QDialog):
         row = QHBoxLayout()
         row.addWidget(self.path, 1)
         row.addWidget(pick)
+        self.res = QComboBox()
+        self.res.addItem(f"Come il progetto · {w}×{h}", (w, h))
+        for th in (2160, 1440, 1080, 720, 540):
+            if th == h:
+                continue
+            tw = int(round(w * th / h))
+            tw -= tw % 2
+            self.res.addItem(f"{tw}×{th}", (tw, th))
         form.addRow("Formato", self.fmt)
+        form.addRow("Risoluzione", self.res)
         form.addRow("Qualità", self.quality)
         form.addRow("File", row)
         dur = project.timeline_end()
         m, s = divmod(dur, 60)
-        form.addRow("Risoluzione", QLabel(f"{w}×{h} · {project.fps:g} fps · durata {int(m)}:{s:04.1f}"))
+        form.addRow("Durata", QLabel(f"{int(m)}:{s:04.1f} · {project.fps:g} fps"))
         lay.addLayout(form)
-        note = QLabel("L'export usa sempre i file originali (mai i proxy) e applica il colore "
-                      "di clip intera, pezzo e timeline.")
+        note = QLabel("L'export usa sempre i file originali (mai i proxy), indipendentemente dalla "
+                      "risoluzione scelta per l'anteprima, e applica il colore di clip intera, pezzo e timeline.")
         note.setWordWrap(True)
         note.setStyleSheet("color:#9a9a9a;")
         lay.addWidget(note)
@@ -100,11 +109,12 @@ class ExportDialog(QDialog):
         self.cancel_btn.setText("Annulla")
         fmt = self.fmt.currentData()
         q = self.quality.currentData()
+        size = self.res.currentData()
 
         def work():
             try:
                 cmd, wd, dur = export.build_job(self.project, self.store, out, fmt, q,
-                                                text_renderer=self.text_renderer)
+                                                text_renderer=self.text_renderer, size=size)
                 err = export.run_job(cmd, wd, dur, progress=self.progress.emit, cancel=self._cancel)
             except Exception as e:
                 err = str(e)

@@ -8,7 +8,7 @@ import time
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence, QPixmap
-from PySide6.QtWidgets import (QDockWidget, QStyle, QTabWidget, QToolBar, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QComboBox, QDockWidget, QStyle, QTabWidget, QToolBar, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QMainWindow, QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget)
 
 from .. import audio, color, media, paths
@@ -105,6 +105,13 @@ class MainWindow(QMainWindow):
         head.addWidget(self.mode_label)
         head.addSpacing(10)
         head.addWidget(self.name_label, 1)
+        head.addWidget(QLabel("Anteprima"))
+        self.preview_combo = QComboBox()
+        self.preview_combo.setToolTip("Risoluzione dell'anteprima: più bassa = riproduzione più fluida.\n"
+                                      "Non cambia il video esportato, che usa la risoluzione del progetto.")
+        self.preview_combo.setFocusPolicy(Qt.NoFocus)
+        head.addWidget(self.preview_combo)
+        head.addSpacing(8)
         head.addWidget(self.btn_mode)
         tl.addLayout(head)
         self.viewer_holder = QVBoxLayout()
@@ -312,14 +319,17 @@ class MainWindow(QMainWindow):
         self.preset_menu.aboutToShow.connect(self._fill_presets)
 
         m = mb.addMenu("Vista")
-        qm = m.addMenu("Qualità anteprima")
+        qm = m.addMenu("Risoluzione anteprima")
         grp = QActionGroup(self)
-        for k, lab in (("piena", "Piena (fino a 1080p)"), ("meta", "Metà (consigliata)"), ("quarto", "Leggera")):
+        self.quality_actions = {}
+        for k, lab in (("piena", "Piena (come il progetto)"), ("meta", "1/2 (consigliata)"), ("terzo", "1/3"),
+                       ("quarto", "1/4 (la più fluida)")):
             a = QAction(lab, self, checkable=True)
             a.setChecked(self.engine.quality == k)
             a.triggered.connect(lambda _=False, kk=k: self.set_quality(kk))
             grp.addAction(a)
             qm.addAction(a)
+            self.quality_actions[k] = a
         self.act_proxy = act(m, "Usa i proxy per l'anteprima", self.set_use_proxy, checkable=True,
                              checked=self.project.data.get("use_proxies", True))
         self.act_autoproxy = act(m, "Crea proxy automaticamente per i file pesanti", self.set_autoproxy,
@@ -418,6 +428,9 @@ class MainWindow(QMainWindow):
         ins.action.connect(self._inspector_action)
         self.timeline.btn_text.clicked.connect(self.add_text)
         self.timeline.btn_settings.clicked.connect(self.timeline_settings)
+        self.preview_combo.currentIndexChanged.connect(
+            lambda i: self.set_quality(self.preview_combo.itemData(i)) if i >= 0 else None)
+        self.inspector.project_bars_changed.connect(self._project_bars)
         self.timeline.btn_effects.clicked.connect(lambda: self.show_tab(0))
         self.timeline.btn_color.clicked.connect(lambda: self.show_tab(1))
         cp.edit.connect(self._grade_edit)
@@ -426,8 +439,10 @@ class MainWindow(QMainWindow):
         self.media_event.connect(self._on_media_event)
 
     # ======================================================= stato e vista
-    def path_for(self, src):
-        if self.project.data.get("use_proxies", True):
+    def path_for(self, src, height=None):
+        """File da leggere per l'anteprima: il proxy (540p) se basta per la
+        risoluzione scelta, altrimenti l'originale."""
+        if self.project.data.get("use_proxies", True) and (height is None or height <= media.PROXY_HEIGHT + 20):
             p = self.proxies.get(src["id"])
             if p and os.path.exists(p):
                 return p
@@ -950,6 +965,14 @@ class MainWindow(QMainWindow):
         self._after_timeline_edit()
         self.statusBar().showMessage(f"Progetto: {vals['width']}×{vals['height']}, {vals['fps']:g} fps", 4000)
 
+    def _project_bars(self, value, begin):
+        st = self.project.data["settings"]
+        if begin:
+            self._grade_begin("project_bars")
+        st["bars"] = float(value)
+        self._mark_dirty()
+        self.engine.refresh()
+
     def show_tab(self, index):
         """Mostra il pannello Effetti (0) o Colore (1), anche se era stato chiuso o staccato."""
         dock = self.right_tabs.parentWidget()
@@ -962,7 +985,10 @@ class MainWindow(QMainWindow):
 
     def _update_settings_label(self):
         st = self.project.data["settings"]
-        self.timeline.btn_settings.setText(f"{float(st['fps']):g} fps · {st['width']}×{st['height']}")
+        self.timeline.btn_settings.setText(f"Progetto: {float(st['fps']):g} fps · {st['width']}×{st['height']}")
+        if getattr(self, "_preview_for", None) != self.project.size:
+            self._fill_preview_combo()
+        self.inspector.set_project_bars(float(st.get("bars", 0.0) or 0.0), st["width"], st["height"])
 
     # ======================================================= proprietà pezzi
     def _sel_items(self, kind=None):
@@ -1569,7 +1595,28 @@ class MainWindow(QMainWindow):
     def set_quality(self, q):
         self.engine.quality = q
         self.cfg["quality"] = q
-        self.engine.refresh()
+        if q in self.quality_actions:
+            self.quality_actions[q].setChecked(True)
+        self._fill_preview_combo()
+        self.engine.invalidate_source(None)
+
+    def _fill_preview_combo(self):
+        """Elenco delle risoluzioni di anteprima calcolate su quella del progetto."""
+        from ..playback import preview_height
+
+        W, H = self.project.size
+        cb = self.preview_combo
+        cb.blockSignals(True)
+        cb.clear()
+        for k, lab in (("piena", "Piena"), ("meta", "1/2"), ("terzo", "1/3"), ("quarto", "1/4")):
+            h = preview_height(H, k)
+            w = int(round(W * h / H))
+            w -= w % 2
+            cb.addItem(f"{lab}  ·  {w}×{h}", k)
+        i = cb.findData(self.engine.quality)
+        cb.setCurrentIndex(i if i >= 0 else 1)
+        cb.blockSignals(False)
+        self._preview_for = (W, H)
 
     def set_use_proxy(self, on):
         self.project.data["use_proxies"] = on
