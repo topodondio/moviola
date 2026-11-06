@@ -1,0 +1,359 @@
+"""Motore di riproduzione: un thread decodifica i fotogrammi in anticipo,
+l'audio fa da orologio e l'interfaccia mostra il fotogramma giusto
+nell'istante giusto (scartando quelli in ritardo: l'anteprima resta
+fluida e a sincrono anche su un computer lento)."""
+from __future__ import annotations
+
+import threading
+import time
+from collections import OrderedDict, deque
+
+import numpy as np
+from PySide6.QtCore import QObject, QTimer, Qt, Signal
+
+from . import audio, color
+from .decode import SourcePool
+
+QUALITY_HEIGHTS = {"piena": 1080, "meta": 540, "quarto": 360}
+
+
+class Frame:
+    __slots__ = ("t", "img", "lut", "lut_key", "graded", "hist", "label")
+
+    def __init__(self, t, img=None, lut=None, lut_key="identity", graded=False, hist=None, label=""):
+        self.t = t
+        self.img = img
+        self.lut = lut
+        self.lut_key = lut_key
+        self.graded = graded
+        self.hist = hist
+        self.label = label
+
+
+def luma_hist(img: np.ndarray, step: int = 4) -> np.ndarray:
+    small = img[::step, ::step]
+    y = (small[..., 0].astype(np.uint16) * 54 + small[..., 1].astype(np.uint16) * 183
+         + small[..., 2].astype(np.uint16) * 19) >> 8
+    return np.bincount(y.ravel(), minlength=256).astype(np.float32)
+
+
+class Engine(QObject):
+    frame_ready = Signal(object)
+    position_changed = Signal(float)
+    playing_changed = Signal(bool)
+
+    QMAX = 8
+
+    def __init__(self, project_getter, store: audio.AudioStore, path_for):
+        super().__init__()
+        self.get_project = project_getter
+        self.store = store
+        self.path_for = path_for  # sorgente -> percorso (proxy o originale)
+        self.pool = SourcePool()
+        self.player = audio.Player()
+        self.player.render = self._render_audio
+
+        self.mode = "timeline"  # oppure "source"
+        self.source_id = None
+        self.position = 0.0
+        self.source_positions: dict[str, float] = {}
+        self.speed = 0.0
+        self.quality = "meta"
+        self.cpu_grade = False  # True se la scheda video non è disponibile
+        self.bypass = False  # prima/dopo
+
+        self._lut_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._cpu_cache: OrderedDict[str, color.CpuLut] = OrderedDict()
+        self._queue: deque[Frame] = deque()
+        self._qlock = threading.Lock()
+        self._cond = threading.Condition()
+        self._still_req = None
+        self._drops: list[str] = []
+        self._play_gen = 0
+        self._next_t = 0.0
+        self._running = True
+        self._last_emit = 0.0
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+        self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.PreciseTimer)
+        self.timer.setInterval(4)
+        self.timer.timeout.connect(self._tick)
+
+    # ------------------------------------------------------------ comandi
+    @property
+    def playing(self):
+        return self.speed != 0.0
+
+    def set_mode(self, mode, source_id=None):
+        if self.playing:
+            self.stop()
+        if self.mode == "source" and self.source_id:
+            self.source_positions[self.source_id] = self.position
+        self.mode = mode
+        self.source_id = source_id
+        if mode == "source":
+            self.position = self.source_positions.get(source_id, 0.0)
+        else:
+            self.position = self.source_positions.get("__timeline__", 0.0)
+        self.position_changed.emit(self.position)
+        self.refresh()
+
+    def remember_timeline_pos(self):
+        if self.mode == "timeline":
+            self.source_positions["__timeline__"] = self.position
+
+    def duration(self):
+        pr = self.get_project()
+        if self.mode == "source":
+            src = pr.source(self.source_id)
+            return src["duration"] if src else 0.0
+        return pr.timeline_end()
+
+    def fps(self):
+        pr = self.get_project()
+        if self.mode == "source":
+            src = pr.source(self.source_id)
+            if src:
+                return src["fps"] or pr.fps
+        return pr.fps
+
+    def frame_step(self):
+        return 1.0 / max(self.fps(), 1.0)
+
+    def seek(self, t, refresh=True):
+        dur = self.duration()
+        fr = self.frame_step()
+        t = max(0.0, min(t, max(0.0, dur - fr * 0.5) if self.mode == "source" else max(dur, 0.0)))
+        t = round(t / fr) * fr
+        if self.playing:
+            spd = self.speed
+            self.stop()
+            self.position = t
+            self.play(spd)
+            return
+        self.position = t
+        if self.mode == "timeline":
+            self.source_positions["__timeline__"] = t
+        self.position_changed.emit(t)
+        if refresh:
+            self.refresh()
+
+    def step(self, frames: int):
+        self.seek(self.position + frames * self.frame_step())
+
+    def refresh(self):
+        """Ridisegna il fotogramma corrente (es. dopo una modifica colore)."""
+        if self.playing:
+            return
+        with self._cond:
+            self._still_req = self.position
+            self._cond.notify()
+
+    def play(self, speed=1.0):
+        dur = self.duration()
+        if dur <= 0:
+            return
+        if speed > 0 and self.position >= dur - self.frame_step():
+            self.position = 0.0
+        with self._qlock:
+            self._queue.clear()
+        with self._cond:
+            self._play_gen += 1
+            self._next_t = self.position
+            self.speed = speed
+            self._still_req = None
+            self._cond.notify()
+        self.player.start(self.position, muted=(speed != 1.0), speed=speed)
+        self.timer.start()
+        self.playing_changed.emit(True)
+
+    def stop(self):
+        if not self.playing:
+            return
+        self.position = max(0.0, min(self.player.clock(), self.duration()))
+        self.player.stop()
+        with self._cond:
+            self.speed = 0.0
+            self._play_gen += 1
+        self.timer.stop()
+        with self._qlock:
+            self._queue.clear()
+        fr = self.frame_step()
+        self.position = round(self.position / fr) * fr
+        if self.mode == "timeline":
+            self.source_positions["__timeline__"] = self.position
+        self.position_changed.emit(self.position)
+        self.playing_changed.emit(False)
+        self.refresh()
+
+    def toggle(self):
+        if self.playing:
+            self.stop()
+        else:
+            self.play(1.0)
+
+    def shuttle(self, direction: int):
+        """J / L: ogni pressione aumenta la velocità (1x, 2x, 4x, 8x)."""
+        if direction == 0:
+            self.stop()
+            return
+        cur = self.speed
+        if cur == 0 or (cur > 0) != (direction > 0):
+            spd = 1.0 * direction
+        else:
+            spd = min(abs(cur) * 2, 8.0) * direction
+        if self.playing:
+            self.stop()
+        self.play(spd)
+
+    def shutdown(self):
+        self._running = False
+        self.player.stop()
+        with self._cond:
+            self._cond.notify()
+        self.pool.clear()
+
+    def invalidate_source(self, path=None):
+        """Da chiamare quando cambia il file usato (es. proxy pronto)."""
+        with self._cond:
+            self._drops.append(path or "*")
+        self.refresh()
+
+    # ------------------------------------------------------------ orologio
+    def _tick(self):
+        t = self.player.clock()
+        dur = self.duration()
+        frame = None
+        sign = 1 if self.speed > 0 else -1
+        with self._qlock:
+            while self._queue and (self._queue[0].t - t) * sign <= 1e-4:
+                frame = self._queue.popleft()
+        if frame is not None:
+            self.frame_ready.emit(frame)
+        self.position = t
+        now = time.perf_counter()
+        if now - self._last_emit > 0.03:
+            self._last_emit = now
+            self.position_changed.emit(max(0.0, min(t, dur)))
+        if (self.speed > 0 and t >= dur) or (self.speed < 0 and t <= 0):
+            self.position = max(0.0, min(t, dur))
+            self.stop()
+            if self.speed == 0 and self.position >= dur:
+                self.seek(dur - self.frame_step() if self.mode == "source" else dur)
+
+    def _render_audio(self, pos, nframes):
+        pr = self.get_project()
+        if self.mode == "source":
+            return audio.mix_source(self.store, self.source_id, pos, nframes)
+        return audio.mix_timeline(pr, self.store, pos, nframes)
+
+    # ------------------------------------------------------------- worker
+    def _worker(self):
+        while self._running:
+            with self._cond:
+                while self._running and self._still_req is None and not self._drops and not (
+                        self.speed != 0 and len(self._queue) < self.QMAX):
+                    self._cond.wait(0.05)
+                if not self._running:
+                    return
+                drops, self._drops = self._drops, []
+                still = self._still_req
+                self._still_req = None
+                gen = self._play_gen
+                speed = self.speed
+            for d in drops:
+                if d == "*":
+                    self.pool.clear()
+                else:
+                    self.pool.drop(d)
+            try:
+                if still is not None and speed == 0:
+                    f = self._render(still, still=True)
+                    if f is not None and self.speed == 0:
+                        self.frame_ready.emit(f)
+                    continue
+                if speed == 0:
+                    continue
+                step = speed / max(self.fps(), 1.0)
+                t = self._next_t
+                clock = self.player.clock()
+                # se siamo in ritardo saltiamo avanti invece di accumulare ritardo
+                if (clock - t) * (1 if speed > 0 else -1) > abs(step) * 1.5:
+                    t = clock + 2 * step
+                f = self._render(t)
+                with self._cond:
+                    if gen != self._play_gen:
+                        continue
+                    self._next_t = t + step
+                if f is not None:
+                    with self._qlock:
+                        self._queue.append(f)
+            except Exception:
+                import traceback
+
+                traceback.print_exc()
+                time.sleep(0.05)
+
+    def _lut_for(self, grades):
+        key = color.grade_key(grades)
+        if key == "identity" or self.bypass:
+            return None, "identity"
+        lut = self._lut_cache.get(key)
+        if lut is None:
+            lut = color.build_lut(grades, 33)
+            self._lut_cache[key] = lut
+            while len(self._lut_cache) > 48:
+                self._lut_cache.popitem(last=False)
+        else:
+            self._lut_cache.move_to_end(key)
+        return lut, key
+
+    def _render(self, t, still=False):
+        pr = self.get_project()
+        if self.mode == "timeline":
+            it = pr.video_item_at(t)
+            if it is None:
+                return Frame(t, None, label="")
+            src = pr.source(it["source"])
+            st = it["src_in"] + (t - it["start"])
+            grades = pr.grades_for_item(it)
+            label = it.get("origin", it["source"])
+        else:
+            src = pr.source(self.source_id)
+            if src is None:
+                return Frame(t, None)
+            st = t
+            grades = pr.grades_for_source(src["id"])
+            label = src["id"]
+        if src is None or not src.get("has_video"):
+            return Frame(t, None, label=label)
+        path = self.path_for(src)
+        fs = self.pool.get(path)
+        if fs is None:
+            return Frame(t, None, label=label + " (file non trovato)")
+        h = QUALITY_HEIGHTS.get(self.quality, 540)
+        h = min(h, pr.size[1])
+        img = fs.get(max(0.0, st), h)
+        if img is None:
+            return Frame(t, None, label=label)
+        img = np.ascontiguousarray(img)
+        lut, key = self._lut_for(grades)
+        graded = False
+        if lut is not None and self.cpu_grade:
+            cl = self._cpu_cache.get(key)
+            if cl is None:
+                cl = color.CpuLut(lut)
+                self._cpu_cache[key] = cl
+                while len(self._cpu_cache) > 6:
+                    self._cpu_cache.popitem(last=False)
+            img = cl.apply(img)
+            graded = True
+        hist = None
+        if still:
+            if graded or lut is None:
+                hist = luma_hist(img, 4)
+            else:
+                hist = luma_hist(color.apply_lut_image(np.ascontiguousarray(img[::4, ::4]), lut), 1)
+        return Frame(t, img, lut, key, graded, hist, label)
