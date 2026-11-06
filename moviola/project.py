@@ -17,8 +17,22 @@ import uuid
 
 from . import color
 
-VERSION = 1
+VERSION = 2
 MIN_LEN_FRAMES = 1
+
+FADE_COLORS = {"black": (0.0, 0.0, 0.0), "white": (1.0, 1.0, 1.0)}
+
+VIDEO_DEFAULTS = {"speed": 1.0, "zoom": 1.0, "pos_x": 0.0, "pos_y": 0.0, "fade_in": 0.0, "fade_out": 0.0,
+                  "fade_in_color": "black", "fade_out_color": "black"}
+AUDIO_DEFAULTS = {"speed": 1.0, "gain_db": 0.0, "fade_in": 0.0, "fade_out": 0.0}
+TEXT_DEFAULTS = {"text": "Titolo", "font": "", "size": 8.0, "color": "#ffffff", "bold": True, "italic": False,
+                 "align": "center", "pos_x": 0.5, "pos_y": 0.5, "shadow": True, "box": False,
+                 "box_color": "#000000", "box_opacity": 0.5, "fade_in": 0.5, "fade_out": 0.5, "speed": 1.0}
+
+
+def lane(it) -> str:
+    """Le scritte stanno sulle tracce video."""
+    return "audio" if it["kind"] == "audio" else "video"
 
 
 def _uid() -> str:
@@ -277,11 +291,11 @@ class Project:
         tr = self.tracks(kind)
         if len(tr) <= 1:
             return False
-        if any(i["kind"] == kind and i["track"] == index for i in self.items):
+        if any(lane(i) == kind and i["track"] == index for i in self.items):
             return False
         del tr[index]
         for i in self.items:
-            if i["kind"] == kind and i["track"] > index:
+            if lane(i) == kind and i["track"] > index:
                 i["track"] -= 1
         for k, t in enumerate(tr):
             t["name"] = f"{'V' if kind == 'video' else 'A'}{k + 1}"
@@ -289,11 +303,25 @@ class Project:
 
     # ------------------------------------------------------- Pezzi timeline
     @staticmethod
+    def speed(it) -> float:
+        return float(it.get("speed", 1.0) or 1.0)
+
+    @staticmethod
+    def item_dur(it):
+        """Durata in timeline (tiene conto della velocità)."""
+        return (it["src_out"] - it["src_in"]) / Project.speed(it)
+
+    @staticmethod
     def item_end(it):
-        return it["start"] + (it["src_out"] - it["src_in"])
+        return it["start"] + Project.item_dur(it)
+
+    @staticmethod
+    def src_time(it, t):
+        """Tempo nel file sorgente corrispondente al tempo t della timeline."""
+        return it["src_in"] + (t - it["start"]) * Project.speed(it)
 
     def items_on(self, kind, track):
-        return sorted((i for i in self.items if i["kind"] == kind and i["track"] == track),
+        return sorted((i for i in self.items if lane(i) == kind and i["track"] == track),
                       key=lambda i: i["start"])
 
     def linked(self, it):
@@ -318,10 +346,11 @@ class Project:
         eps = 1e-6
         new_items = []
         for it in self.items:
-            if it["kind"] != kind or it["track"] != track or it["id"] in exclude:
+            if lane(it) != kind or it["track"] != track or it["id"] in exclude:
                 new_items.append(it)
                 continue
             s, e = it["start"], self.item_end(it)
+            sp = self.speed(it)
             if e <= a + eps or s >= b - eps:
                 new_items.append(it)
                 continue
@@ -331,17 +360,19 @@ class Project:
                 right = copy.deepcopy(it)
                 right["id"] = _uid()
                 right["link"] = None
-                it["src_out"] = it["src_in"] + (a - s)
-                right["src_in"] = right["src_in"] + (b - s)
+                it["src_out"] = it["src_in"] + (a - s) * sp
+                right["src_in"] = right["src_in"] + (b - s) * sp
                 right["start"] = b
                 it["link"] = None
+                it["fade_out"] = 0.0
+                right["fade_in"] = 0.0
                 new_items.extend([it, right])
                 continue
             if s < a:
-                it["src_out"] = it["src_in"] + (a - s)
+                it["src_out"] = it["src_in"] + (a - s) * sp
             else:
                 cut = b - s
-                it["src_in"] += cut
+                it["src_in"] += cut * sp
                 it["start"] = b
             new_items.append(it)
         self.data["items"] = new_items
@@ -360,7 +391,7 @@ class Project:
         """Inserisce pezzi già costruiti, sovrascrivendo ciò che c'è sotto."""
         ids = {i["id"] for i in items}
         for it in items:
-            self.clear_range(it["kind"], it["track"], it["start"], self.item_end(it), exclude=ids)
+            self.clear_range(lane(it), it["track"], it["start"], self.item_end(it), exclude=ids)
         self.items.extend(items)
         self._cleanup_links()
 
@@ -376,12 +407,37 @@ class Project:
         out = []
         base = {"source": src["id"], "origin": ref_id, "start": start, "src_in": tin, "src_out": tout, "link": link}
         if src["has_video"] and video:
-            it = dict(base, id=_uid(), kind="video", track=vtrack, grade=color.default_grade())
+            it = dict(base, id=_uid(), kind="video", track=vtrack, grade=color.default_grade(), **VIDEO_DEFAULTS)
             out.append(it)
         if src["has_audio"] and audio:
-            it = dict(base, id=_uid(), kind="audio", track=atrack, gain_db=0.0)
+            it = dict(base, id=_uid(), kind="audio", track=atrack, **AUDIO_DEFAULTS)
             out.append(it)
         return out
+
+    def make_text(self, start, track=None, dur=4.0, **props):
+        """Scritta (titolo) sulla traccia video indicata o sulla più alta libera."""
+        start = max(0.0, self.snap(start))
+        dur = max(self.frame(), dur)
+        if track is None:
+            nv = len(self.tracks("video"))
+            track = None
+            for k in range(nv - 1, -1, -1):
+                busy = any(lane(i) == "video" and i["track"] == k and i["start"] < start + dur - 1e-6
+                           and self.item_end(i) > start + 1e-6 for i in self.items)
+                if not busy:
+                    track = k
+                    break
+            if track is None:
+                track = self.add_track("video")
+        it = dict(TEXT_DEFAULTS, id=_uid(), kind="text", track=track, source=None, origin="Testo",
+                  start=start, src_in=0.0, src_out=dur, link=None)
+        it.update(props)
+        return it
+
+    def add_text(self, start, track=None, dur=4.0, **props):
+        it = self.make_text(start, track, dur, **props)
+        self.place_items([it])
+        return it
 
     def add_to_timeline(self, ref_id, start, vtrack=0, atrack=0):
         items = self.make_items(ref_id, start, vtrack, atrack)
@@ -412,15 +468,15 @@ class Project:
         dt = max(dt, -min_start)
         nv = len(self.tracks("video"))
         na = len(self.tracks("audio"))
-        vt = [i["track"] for i in moving if i["kind"] == "video"]
-        at = [i["track"] for i in moving if i["kind"] == "audio"]
+        vt = [i["track"] for i in moving if lane(i) == "video"]
+        at = [i["track"] for i in moving if lane(i) == "audio"]
         if vt:
             dv = max(-min(vt), min(dv, nv - 1 - max(vt)))
         if at:
             da = max(-min(at), min(da, na - 1 - max(at)))
         for i in moving:
             i["start"] = self.snap(i["start"] + dt)
-            i["track"] += dv if i["kind"] == "video" else da
+            i["track"] += dv if lane(i) == "video" else da
         self.data["items"] = [i for i in self.items if i["id"] not in ids]
         self.place_items(moving)
 
@@ -435,28 +491,34 @@ class Project:
         fr = self.frame()
         targets = []
         for g in group:
-            src = self.source(g["source"])
-            dur = src["duration"] if src else g["src_out"]
+            sp = self.speed(g)
+            text = g["kind"] == "text"
+            src = self.source(g["source"]) if not text else None
+            dur = src["duration"] if src else (1e9 if text else g["src_out"])
+            length = self.item_dur(g)
             if edge == "left":
                 if abs(g["start"] - it["start"]) > 1e-6:
                     continue
                 d = t - g["start"]
-                d = max(d, -g["src_in"], -g["start"])
-                d = min(d, (g["src_out"] - g["src_in"]) - fr)
+                d = max(d, -g["start"]) if text else max(d, -g["src_in"] / sp, -g["start"])
+                d = min(d, length - fr)
                 g["start"] += d
-                g["src_in"] += d
+                if text:
+                    g["src_out"] -= d
+                else:
+                    g["src_in"] += d * sp
                 targets.append(g)
             else:
                 if abs(self.item_end(g) - self.item_end(it)) > 1e-6:
                     continue
                 d = t - self.item_end(g)
-                d = min(d, dur - g["src_out"])
-                d = max(d, -((g["src_out"] - g["src_in"]) - fr))
-                g["src_out"] += d
+                d = min(d, (dur - g["src_out"]) / sp)
+                d = max(d, -(length - fr))
+                g["src_out"] += d * sp
                 targets.append(g)
         ids = {g["id"] for g in targets}
         for g in targets:
-            self.clear_range(g["kind"], g["track"], g["start"], self.item_end(g), exclude=ids)
+            self.clear_range(lane(g), g["track"], g["start"], self.item_end(g), exclude=ids)
 
     def split_at(self, t, ids=None):
         """Taglia al tempo t i pezzi che lo attraversano (solo quelli indicati
@@ -475,9 +537,15 @@ class Project:
             right["id"] = _uid()
             if it.get("link"):
                 right["link"] = new_links.setdefault(it["link"], _uid())
-            it["src_out"] = it["src_in"] + (t - s)
-            right["src_in"] = it["src_out"]
+            if it["kind"] == "text":
+                it["src_out"] = t - s
+                right["src_out"] = e - t
+            else:
+                it["src_out"] = it["src_in"] + (t - s) * self.speed(it)
+                right["src_in"] = it["src_out"]
             right["start"] = t
+            it["fade_out"] = 0.0
+            right["fade_in"] = 0.0
             self.items.append(right)
             created.append(right)
         return created
@@ -506,6 +574,33 @@ class Project:
                 for g in self.linked(it):
                     g["link"] = None
 
+    def set_speed(self, ids, speed):
+        """Cambia la velocità (anche dei collegati) lasciando fermo l'inizio;
+        quello che segue sulla timeline si sposta per non sovrapporsi."""
+        speed = max(0.1, min(8.0, float(speed)))
+        groups = []
+        seen = set()
+        for iid in ids:
+            it = self.item(iid)
+            if it is None or it["kind"] == "text" or it["id"] in seen:
+                continue
+            g = self.linked(it)
+            seen.update(i["id"] for i in g)
+            groups.append(g)
+        for g in sorted(groups, key=lambda gg: -max(self.item_end(i) for i in gg)):
+            old_end = max(self.item_end(i) for i in g)
+            for i in g:
+                i["speed"] = speed
+            new_end = max(self.item_end(i) for i in g)
+            delta = new_end - old_end
+            gids = {i["id"] for i in g}
+            if abs(delta) > 1e-6:
+                for i in self.items:
+                    if i["id"] not in gids and i["start"] >= old_end - 1e-6:
+                        i["start"] = max(0.0, self.snap(i["start"] + delta))
+            for i in g:
+                self.clear_range(lane(i), i["track"], i["start"], self.item_end(i), exclude=gids)
+
     def link(self, ids):
         its = [self.item(i) for i in ids if self.item(i)]
         if len(its) >= 2:
@@ -519,12 +614,44 @@ class Project:
         tracks = self.tracks("video")
         best = None
         for it in self.items:
-            if it["kind"] != "video" or tracks[it["track"]].get("muted"):
+            if it["kind"] != "video" or it["track"] >= len(tracks) or tracks[it["track"]].get("muted"):
                 continue
             if it["start"] - 1e-9 <= t < self.item_end(it) - 1e-9:
                 if best is None or it["track"] > best["track"]:
                     best = it
         return best
+
+    def texts_at(self, t):
+        """Scritte visibili al tempo t (dal basso verso l'alto)."""
+        tracks = self.tracks("video")
+        out = [it for it in self.items if it["kind"] == "text" and it["track"] < len(tracks)
+               and not tracks[it["track"]].get("muted")
+               and it["start"] - 1e-9 <= t < self.item_end(it) - 1e-9]
+        return sorted(out, key=lambda i: i["track"])
+
+    def texts(self):
+        tracks = self.tracks("video")
+        return [it for it in self.items if it["kind"] == "text" and it["track"] < len(tracks)
+                and not tracks[it["track"]].get("muted")]
+
+    @staticmethod
+    def fade_at(it, t):
+        """(quantità 0..1, colore rgb) della dissolvenza di un pezzo al tempo t."""
+        dur = Project.item_dur(it)
+        u = t - it["start"]
+        fi = min(float(it.get("fade_in", 0.0) or 0.0), dur)
+        fo = min(float(it.get("fade_out", 0.0) or 0.0), dur)
+        a_in = (1.0 - u / fi) if fi > 0 and u < fi else 0.0
+        a_out = (1.0 - (dur - u) / fo) if fo > 0 and dur - u < fo else 0.0
+        if a_in >= a_out:
+            return max(0.0, min(1.0, a_in)), FADE_COLORS.get(it.get("fade_in_color", "black"), (0, 0, 0))
+        return max(0.0, min(1.0, a_out)), FADE_COLORS.get(it.get("fade_out_color", "black"), (0, 0, 0))
+
+    @staticmethod
+    def opacity_at(it, t):
+        """Opacità di una scritta (dissolvenza in entrata/uscita)."""
+        a, _ = Project.fade_at(it, t)
+        return 1.0 - a
 
     def snap_points(self, exclude=()):
         pts = {0.0}

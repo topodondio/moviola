@@ -63,6 +63,50 @@ def _add_segment(out, data, out_from, src_from, n, gain, fade_in=0, fade_out=0):
     out[out_from:out_from + n] += chunk
 
 
+def _item_chunk(data, it, a, b, rate):
+    """Campioni del pezzo tra i tempi a e b della timeline (velocità, volume e
+    dissolvenze inclusi)."""
+    n = int(round((b - a) * rate))
+    if n <= 0:
+        return None
+    sp = float(it.get("speed", 1.0) or 1.0)
+    src0 = (it["src_in"] + (a - it["start"]) * sp) * rate
+    if abs(sp - 1.0) < 1e-6:
+        i0 = int(round(src0))
+        i1 = min(i0 + n, data.shape[0])
+        if i1 <= max(i0, 0):
+            return None
+        chunk = np.zeros((n, CHANNELS), dtype=np.float32)
+        lo = max(i0, 0)
+        chunk[lo - i0:i1 - i0] = data[lo:i1]
+    else:
+        pos = src0 + np.arange(n, dtype=np.float64) * sp
+        valid = (pos >= 0) & (pos < data.shape[0] - 1)
+        if not valid.any():
+            return None
+        pos = np.clip(pos, 0, data.shape[0] - 2)
+        i = pos.astype(np.int64)
+        f = (pos - i).astype(np.float32)[:, None]
+        lo, hi = int(i.min()), int(i.max()) + 2
+        block = np.asarray(data[lo:hi], dtype=np.float32)
+        i -= lo
+        chunk = block[i] * (1 - f) + block[i + 1] * f
+        chunk[~valid] = 0
+    chunk = chunk.astype(np.float32) * (db_to_gain(it.get("gain_db", 0.0)) / 32768.0)
+    fi = float(it.get("fade_in", 0.0) or 0.0)
+    fo = float(it.get("fade_out", 0.0) or 0.0)
+    if fi > 0 or fo > 0:
+        dur = (it["src_out"] - it["src_in"]) / sp
+        u = (a - it["start"]) + np.arange(n, dtype=np.float32) / rate
+        env = np.ones(n, dtype=np.float32)
+        if fi > 0:
+            env = np.minimum(env, np.clip(u / fi, 0, 1))
+        if fo > 0:
+            env = np.minimum(env, np.clip((dur - u) / fo, 0, 1))
+        chunk *= env[:, None]
+    return chunk
+
+
 def mix_timeline(project, store: AudioStore, t0: float, nframes: int, rate: int = RATE) -> np.ndarray:
     """Mixa tutte le tracce audio non mute a partire dal tempo t0."""
     out = np.zeros((nframes, CHANNELS), dtype=np.float32)
@@ -74,7 +118,7 @@ def mix_timeline(project, store: AudioStore, t0: float, nframes: int, rate: int 
         if it["track"] >= len(tracks) or tracks[it["track"]].get("muted"):
             continue
         s = it["start"]
-        e = s + (it["src_out"] - it["src_in"])
+        e = s + (it["src_out"] - it["src_in"]) / float(it.get("speed", 1.0) or 1.0)
         if e <= t0 or s >= t1:
             continue
         data = store.get(it["source"])
@@ -82,10 +126,13 @@ def mix_timeline(project, store: AudioStore, t0: float, nframes: int, rate: int 
             continue
         a = max(s, t0)
         b = min(e, t1)
-        out_from = int(round((a - t0) * rate))
-        src_from = int(round((it["src_in"] + (a - s)) * rate))
-        n = int(round((b - a) * rate))
-        _add_segment(out, data, out_from, src_from, n, db_to_gain(it.get("gain_db", 0.0)))
+        chunk = _item_chunk(data, it, a, b, rate)
+        if chunk is None:
+            continue
+        o = int(round((a - t0) * rate))
+        k = min(chunk.shape[0], nframes - o)
+        if k > 0:
+            out[o:o + k] += chunk[:k]
     return out
 
 

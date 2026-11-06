@@ -15,8 +15,9 @@ class ExportDialog(QDialog):
     progress = Signal(float)
     finished_job = Signal(object)
 
-    def __init__(self, project, store, default_dir, parent=None):
+    def __init__(self, project, store, default_dir, parent=None, text_renderer=None):
         super().__init__(parent)
+        self.text_renderer = text_renderer
         self.setWindowTitle("Esporta video")
         self.setMinimumWidth(520)
         self.project = project
@@ -102,7 +103,8 @@ class ExportDialog(QDialog):
 
         def work():
             try:
-                cmd, wd, dur = export.build_job(self.project, self.store, out, fmt, q)
+                cmd, wd, dur = export.build_job(self.project, self.store, out, fmt, q,
+                                                text_renderer=self.text_renderer)
                 err = export.run_job(cmd, wd, dur, progress=self.progress.emit, cancel=self._cancel)
             except Exception as e:
                 err = str(e)

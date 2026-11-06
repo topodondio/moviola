@@ -5,7 +5,7 @@ Pensato per chi viene dalla fotografia: si lavora "a clip" e il colore si
 corregge con comandi fotografici (esposizione, contrasto, bilanciamento del
 bianco, curva, HSL per colore), senza nodi.
 
-> Stato: **prototipo 0.1**. Le funzioni base ci sono tutte; da collaudare
+> Stato: **prototipo 0.2**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
 ## Avvio
@@ -62,7 +62,21 @@ Se il doppio clic su Mac non funziona, da Terminale: `bash avvia_mac.command`.
    Si applicano in quest'ordine (clip → pezzo → timeline). Copia/incolla con
    Ctrl/Cmd+Maiusc+C / V su più elementi selezionati (Ctrl/Cmd+clic).
    I preset si salvano dal menu Colore. Tasto `\` = prima/dopo.
-6. **Esporta** (Ctrl/Cmd+E): MP4 H.264 o MOV ProRes 422, sempre dai file
+6. **Pannello Clip** (a destra, accanto a Colore): seleziona un pezzo in
+   timeline e regola
+   - **velocità** (10–800 %, con pulsanti 25/50/100/200/400 %): il pezzo
+     cambia durata e ciò che segue si sposta; l'audio collegato segue;
+   - **inquadratura**: zoom, spostamento orizzontale/verticale, *Adatta*,
+     *Riempi* (niente bande), *Centra*; oppure trascina l'immagine nel visore;
+   - **dissolvenze** in entrata e uscita, da/verso **nero** o **bianco**,
+     anche sull'audio collegato (spunta);
+   - per i pezzi audio: volume e dissolvenze audio.
+7. **Scritte**: tasto **T** (o «T Scritta» sulla timeline) aggiunge una
+   scritta alla testina sulla traccia video più alta libera. Testo su più
+   righe, carattere, dimensione, colore, grassetto/corsivo, allineamento,
+   ombra, riquadro con opacità, durata, comparsa e scomparsa in dissolvenza.
+   Si sposta trascinandola nel visore. Le scritte stanno sempre sopra al video.
+8. **Esporta** (Ctrl/Cmd+E): MP4 H.264 o MOV ProRes 422, sempre dai file
    originali.
 
 ### Timeline
@@ -117,5 +131,5 @@ Test del motore: `python -m tests.test_core`
 
 ## Prossimi passi possibili
 
-Testi, transizioni da/verso nero o bianco, velocità, zoom e posizione della
-clip, dissolvenze audio, maschere/gradiente lineare come in Camera Oscura.
+Dissolvenza incrociata tra due clip, fermo immagine, rotazione,
+maschere/gradiente lineare come in Camera Oscura.

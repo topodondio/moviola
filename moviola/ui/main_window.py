@@ -6,9 +6,9 @@ import json
 import os
 import time
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence, QPixmap
-from PySide6.QtWidgets import (QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QDockWidget, QTabWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QMainWindow, QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget)
 
 from .. import audio, color, media, paths
@@ -17,6 +17,8 @@ from ..project import Project
 from .bin_panel import BinPanel
 from .color_panel import ColorPanel
 from .export_dialog import ExportDialog
+from .inspector import Inspector
+from .text_render import default_family, render_png, text_box
 from .source_bar import SourceBar
 from .timeline import TimelinePanel, tc
 from .viewer import CpuViewer, GlViewer
@@ -33,6 +35,7 @@ E: accoda alla timeline · F9: inserisci alla testina della timeline<br><br>
 <b>Timeline</b><br>
 B: taglia alla testina · Canc: elimina · Maiusc+Canc: elimina e chiudi lo spazio<br>
 N: aggancio on/off · + / −: zoom · Maiusc+Z: adatta · Alt+trascina: muovi solo video o solo audio<br>
+T: aggiungi una scritta alla testina · trascina nel visore: sposta scritta o inquadratura<br>
 Ctrl/Cmd+clic: selezione multipla · Ctrl/Cmd+A: seleziona tutto<br><br>
 <b>Colore</b><br>
 Ctrl/Cmd+Maiusc+C / V: copia / incolla regolazioni · \\ : prima / dopo<br>
@@ -62,6 +65,8 @@ class MainWindow(QMainWindow):
         self._busy_proxy = set()
         self._pending_imports = []
         self._import_results = {}
+        self._vdrag = None
+        default_family()  # carattere di sistema letto subito (serve anche all'export in background)
 
         self.engine = Engine(lambda: self.project, self.store, self.path_for)
         self.engine.quality = cfg.get("quality", "meta")
@@ -156,9 +161,14 @@ class MainWindow(QMainWindow):
         d.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.LeftDockWidgetArea, d)
         self.color_panel = ColorPanel()
-        d2 = QDockWidget("Colore", self)
+        self.inspector = Inspector()
+        self.right_tabs = QTabWidget()
+        self.right_tabs.addTab(self.inspector, "Clip")
+        self.right_tabs.addTab(self.color_panel, "Colore")
+        self.right_tabs.setCurrentIndex(1)
+        d2 = QDockWidget("Proprietà", self)
         d2.setObjectName("dock_colore")
-        d2.setWidget(self.color_panel)
+        d2.setWidget(self.right_tabs)
         d2.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.RightDockWidgetArea, d2)
         self.resizeDocks([d, d2], [330, 330], Qt.Horizontal)
@@ -184,6 +194,9 @@ class MainWindow(QMainWindow):
             old.deleteLater()
         self.viewer_holder.addWidget(v)
         self.viewer = v
+        v.overlay.drag_begin.connect(self._viewer_drag_begin)
+        v.overlay.drag_move.connect(self._viewer_drag_move)
+        v.overlay.drag_end.connect(self._viewer_drag_end)
         self.engine._lut_cache.clear()
 
     def _gl_failed(self, msg):
@@ -275,6 +288,8 @@ class MainWindow(QMainWindow):
         act(m, "Zoom indietro", lambda: self.timeline.view.zoom(1 / 1.4), "-")
         act(m, "Adatta alla finestra", self.timeline.view.zoom_fit, "Shift+Z")
         m.addSeparator()
+        act(m, "Aggiungi scritta alla testina", self.add_text, "T")
+        m.addSeparator()
         act(m, "Aggiungi traccia video", lambda: self.timeline_action("add_video_track", []))
         act(m, "Aggiungi traccia audio", lambda: self.timeline_action("add_audio_track", []))
         act(m, "Scollega audio e video", lambda: self.timeline_action("unlink", list(self.timeline.view.selection)))
@@ -339,6 +354,11 @@ class MainWindow(QMainWindow):
         v.action.connect(self.timeline_action)
         cp = self.color_panel
         cp.begin_edit.connect(self._grade_begin)
+        ins = self.inspector
+        ins.begin.connect(self._grade_begin)
+        ins.changed.connect(self._item_edit)
+        ins.action.connect(self._inspector_action)
+        self.timeline.btn_text.clicked.connect(self.add_text)
         cp.edit.connect(self._grade_edit)
         cp.target_changed.connect(lambda k: self.refresh_color_panel())
         cp.action.connect(self._color_action)
@@ -359,6 +379,7 @@ class MainWindow(QMainWindow):
         self.timeline.sync()
         self._update_source_bar()
         self.refresh_color_panel()
+        self.refresh_inspector()
         self._update_title()
         self._apply_aspect()
         self.engine.refresh()
@@ -446,10 +467,7 @@ class MainWindow(QMainWindow):
         self.source_bar.set_position(self.engine.position)
 
     def _on_frame(self, f):
-        if f.img is None:
-            self.viewer.clear()
-        else:
-            self.viewer.set_frame(f)
+        self.viewer.set_frame(f)
         if f.hist is not None:
             self.color_panel.curve.set_hist(f.hist)
 
@@ -608,6 +626,7 @@ class MainWindow(QMainWindow):
         self._mark_dirty()
         self._update_name_label()
         self.refresh_color_panel()
+        self.refresh_inspector()
         self.engine.refresh()
 
     def bin_action(self, action, ids):
@@ -719,6 +738,7 @@ class MainWindow(QMainWindow):
         if ids and self.color_panel.target() == "source" and not self._src_target_sticky():
             self.color_panel.set_target("item")
         self.refresh_color_panel()
+        self.refresh_inspector()
 
     def _src_target_sticky(self):
         return False
@@ -726,6 +746,7 @@ class MainWindow(QMainWindow):
     def _timeline_changed(self):
         self.engine.refresh()
         self.timeline.sync()
+        self.refresh_inspector()
 
     def select_all(self):
         if self.active_panel == "timeline" or self.engine.mode == "timeline":
@@ -863,6 +884,154 @@ class MainWindow(QMainWindow):
             return
         self._apply_aspect()
         self._after_timeline_edit()
+
+    # ======================================================= proprietà pezzi
+    def _sel_items(self, kind=None):
+        pr = self.project
+        its = [pr.item(i) for i in self.timeline.view.selection if pr.item(i)]
+        if kind:
+            its = [i for i in its if i["kind"] == kind]
+        return sorted(its, key=lambda i: (i["start"], i["track"]))
+
+    def _primary_item(self):
+        for k in ("video", "text", "audio"):
+            its = self._sel_items(k)
+            if its:
+                return its[0], len(its)
+        return None, 0
+
+    def refresh_inspector(self):
+        it, n = self._primary_item()
+        dur = self.project.item_dur(it) if it else None
+        self.inspector.show_item(it, n, dur)
+        texts = self._sel_items("text")
+        self.viewer.overlay.highlight = texts[0]["id"] if texts else None
+        self.viewer.overlay.update()
+
+    def _item_edit(self, kind, key, value):
+        pr = self.project
+        its = self._sel_items(kind)
+        if not its:
+            return
+        if key == "speed":
+            pr.set_speed([i["id"] for i in its], value)
+        elif key == "duration":
+            for it in its:
+                it["src_out"] = it["src_in"] + max(pr.frame(), pr.snap(float(value)))
+                pr.clear_range("video", it["track"], it["start"], pr.item_end(it), exclude={it["id"]})
+        else:
+            targets = list(its)
+            if kind == "video" and key in ("fade_in", "fade_out") and self.inspector.fade_audio.isChecked():
+                for it in its:
+                    targets += [g for g in pr.linked(it) if g["kind"] == "audio"]
+            for it in targets:
+                it[key] = value
+        self._mark_dirty()
+        self.timeline.view.update()
+        if key in ("speed", "duration"):
+            self.timeline.sync()
+            self._update_name_label()
+            self.refresh_inspector()
+        self.engine.refresh()
+
+    def _inspector_action(self, act):
+        if act == "add_text":
+            return self.add_text()
+        pr = self.project
+        its = self._sel_items("video")
+        if not its:
+            return
+        self.project.checkpoint()
+        W, H = pr.size
+        for it in its:
+            if act == "center":
+                it["pos_x"] = 0.0
+                it["pos_y"] = 0.0
+            elif act == "fit":
+                it["zoom"] = 1.0
+                it["pos_x"] = it["pos_y"] = 0.0
+            elif act == "fill":
+                src = pr.source(it["source"])
+                sw = (src or {}).get("width") or W
+                sh = (src or {}).get("height") or H
+                it["zoom"] = max(W / sw, H / sh) / min(W / sw, H / sh)
+                it["pos_x"] = it["pos_y"] = 0.0
+        self._after_timeline_edit()
+
+    def add_text(self):
+        pr = self.project
+        if self.engine.mode == "timeline":
+            t = self.engine.position
+        else:
+            t = self.engine.source_positions.get("__timeline__", 0.0)
+        pr.checkpoint()
+        it = pr.add_text(t)
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")
+        self.timeline.view.set_selection([it["id"]], emit=False)
+        self.active_panel = "timeline"
+        self.right_tabs.setCurrentIndex(0)
+        self._after_timeline_edit()
+        self.inspector.text_edit.setFocus()
+        self.inspector.text_edit.selectAll()
+
+    # trascinamento nel visore: sposta scritte e inquadratura
+    def _viewer_drag_begin(self, nx, ny):
+        self._vdrag = None
+        if self.engine.mode != "timeline" or self.engine.playing:
+            return
+        pr = self.project
+        t = self.engine.position
+        W, H = pr.size
+        frame = QRectF(0, 0, W, H)
+        target = None
+        sel = self.timeline.view.selection
+        texts = list(reversed(pr.texts_at(t)))
+        hit = [x for x in texts if text_box(x, frame).contains(nx * W, ny * H)]
+        if hit:
+            target = next((x for x in hit if x["id"] in sel), hit[0])
+        else:
+            v = pr.video_item_at(t)
+            if v is not None and (v["id"] in sel or not sel):
+                target = v
+        if target is None:
+            return
+        if target["id"] not in sel:
+            if target["kind"] == "video":
+                self.timeline.view.set_selection(pr.expand_linked([target["id"]]))
+            else:
+                self.timeline.view.set_selection([target["id"]])
+        self.right_tabs.setCurrentIndex(0)
+        pr.checkpoint()
+        self._vdrag = (target["id"], float(target.get("pos_x", 0.0)), float(target.get("pos_y", 0.0)))
+
+    def _viewer_drag_move(self, dx, dy):
+        if not self._vdrag:
+            return
+        iid, ox, oy = self._vdrag
+        it = self.project.item(iid)
+        if it is None:
+            return
+        if it["kind"] == "text":
+            it["pos_x"] = min(1.0, max(0.0, ox + dx))
+            it["pos_y"] = min(1.0, max(0.0, oy + dy))
+        else:
+            it["pos_x"] = min(2.0, max(-2.0, ox + dx))
+            it["pos_y"] = min(2.0, max(-2.0, oy + dy))
+        self.engine.refresh()
+        self.refresh_inspector()
+
+    def _viewer_drag_end(self):
+        d = self._vdrag
+        self._vdrag = None
+        if not d:
+            return
+        it = self.project.item(d[0])
+        if it is not None and abs(it.get("pos_x", 0) - d[1]) < 1e-9 and abs(it.get("pos_y", 0) - d[2]) < 1e-9:
+            self.project.drop_checkpoint()
+        else:
+            self._mark_dirty()
+            self.timeline.view.update()
 
     # =============================================================== colore
     def color_targets(self):
@@ -1299,7 +1468,8 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Esporta", "La timeline è vuota.")
             return
         self.engine.stop()
-        d = ExportDialog(self.project, self.store, self.cfg.get("last_export_dir", os.path.expanduser("~")), self)
+        d = ExportDialog(self.project, self.store, self.cfg.get("last_export_dir", os.path.expanduser("~")), self,
+                         text_renderer=render_png)
         if d.exec():
             self.cfg["last_export_dir"] = os.path.dirname(d.path.text())
 

@@ -31,6 +31,7 @@ C_ROW2 = QColor(30, 31, 34)
 C_HEAD = QColor(38, 40, 43)
 C_VIDEO = QColor(70, 98, 138)
 C_AUDIO = QColor(52, 112, 98)
+C_TEXT = QColor(122, 84, 150)
 C_SEL = QColor(232, 163, 61)
 C_PLAY = QColor(235, 70, 60)
 
@@ -116,7 +117,7 @@ class TimelineView(QWidget):
         return max(0.0, self.scroll_t + (x - HEAD) / self.pps)
 
     def item_rect(self, it):
-        r = self.row_of(it["kind"], it["track"])
+        r = self.row_of("audio" if it["kind"] == "audio" else "video", it["track"])
         if r is None:
             return QRectF()
         x0 = self.x_of(it["start"])
@@ -277,15 +278,16 @@ class TimelineView(QWidget):
     def _paint_item(self, p, it, rect):
         pr = self.project
         sel = it["id"] in self.selection
-        base = C_VIDEO if it["kind"] == "video" else C_AUDIO
-        src = pr.source(it["source"])
-        missing = src is None
+        kind = it["kind"]
+        base = {"video": C_VIDEO, "audio": C_AUDIO, "text": C_TEXT}[kind]
+        src = pr.source(it["source"]) if kind != "text" else None
+        missing = kind != "text" and src is None
         p.save()
         p.setClipRect(rect.intersected(QRectF(HEAD, RULER, self.width() - HEAD, self.height())))
         p.setPen(Qt.NoPen)
         p.setBrush(base if not missing else QColor(120, 50, 50))
         p.drawRoundedRect(rect, 3, 3)
-        if it["kind"] == "video":
+        if kind == "video":
             pm = self.host.thumb_for(it["source"])
             if pm is not None and rect.width() > 40:
                 th = rect.height() - 16
@@ -294,15 +296,43 @@ class TimelineView(QWidget):
             if not color.is_identity(it.get("grade")):
                 p.setBrush(C_SEL)
                 p.drawEllipse(QPointF(rect.right() - 8, rect.top() + 7), 3.5, 3.5)
-        else:
+        elif kind == "audio":
             self._paint_wave(p, it, rect)
-            if abs(it.get("gain_db", 0.0)) > 0.05:
-                p.setPen(QColor(230, 230, 230))
-                p.drawText(rect.adjusted(0, 1, -5, 0), Qt.AlignRight | Qt.AlignTop, f"{it['gain_db']:+.1f} dB")
+        # dissolvenze: triangoli agli estremi
+        for key, left in (("fade_in", True), ("fade_out", False)):
+            d = float(it.get(key, 0.0) or 0.0)
+            if d <= 0:
+                continue
+            w = min(d * self.pps, rect.width())
+            white = it.get(key + "_color") == "white"
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255, 110) if white else QColor(0, 0, 0, 120))
+            if left:
+                poly = [QPointF(rect.left(), rect.top()), QPointF(rect.left() + w, rect.top()),
+                        QPointF(rect.left(), rect.bottom())]
+            else:
+                poly = [QPointF(rect.right(), rect.top()), QPointF(rect.right() - w, rect.top()),
+                        QPointF(rect.right(), rect.bottom())]
+            p.drawPolygon(QPolygonF(poly))
+        badges = []
+        sp = float(it.get("speed", 1.0) or 1.0)
+        if abs(sp - 1.0) > 1e-3:
+            badges.append(f"{sp * 100:.0f}%")
+        if kind == "video" and (abs(float(it.get("zoom", 1.0) or 1.0) - 1) > 1e-3 or it.get("pos_x") or it.get("pos_y")):
+            badges.append("⤢")
+        if kind == "audio" and abs(it.get("gain_db", 0.0)) > 0.05:
+            badges.append(f"{it['gain_db']:+.1f} dB")
+        if badges:
+            p.setPen(QColor(235, 235, 235))
+            p.drawText(rect.adjusted(0, rect.height() - 16, -6, 0), Qt.AlignRight | Qt.AlignVCenter,
+                       "  ".join(badges))
         p.setPen(QColor(245, 245, 245))
-        lab = it.get("origin") or it["source"]
-        if it.get("link") is None and src is not None and src.get("has_audio") and src.get("has_video"):
-            lab += "  (scollegato)"
+        if kind == "text":
+            lab = "T  " + ((it.get("text") or "").split("\n")[0] or "(vuota)")
+        else:
+            lab = it.get("origin") or it["source"]
+            if it.get("link") is None and src is not None and src.get("has_audio") and src.get("has_video"):
+                lab += "  (scollegato)"
         p.drawText(rect.adjusted(5, 1, -16, 0), Qt.AlignLeft | Qt.AlignTop, lab)
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(C_SEL if sel else base.darker(150), 2 if sel else 1))
@@ -630,7 +660,9 @@ class TimelinePanel(QWidget):
         self.btn_snap.setCheckable(True)
         self.btn_snap.setChecked(True)
         self.btn_fit = QPushButton("Adatta")
-        for b in (self.btn_split, self.btn_snap, self.btn_fit):
+        self.btn_text = QPushButton("T  Scritta")
+        self.btn_text.setToolTip("Aggiungi una scritta alla testina (T)")
+        for b in (self.btn_split, self.btn_snap, self.btn_fit, self.btn_text):
             bar.addWidget(b)
         bar.addStretch(1)
         bar.addWidget(QLabel("Zoom"))

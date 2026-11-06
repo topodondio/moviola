@@ -18,7 +18,8 @@ QUALITY_HEIGHTS = {"piena": 1080, "meta": 540, "quarto": 360}
 
 
 class Frame:
-    __slots__ = ("t", "img", "lut", "lut_key", "graded", "hist", "label")
+    __slots__ = ("t", "img", "lut", "lut_key", "graded", "hist", "label", "fade", "fade_color", "xf", "texts",
+                 "item_id")
 
     def __init__(self, t, img=None, lut=None, lut_key="identity", graded=False, hist=None, label=""):
         self.t = t
@@ -28,6 +29,11 @@ class Frame:
         self.graded = graded
         self.hist = hist
         self.label = label
+        self.fade = 0.0  # dissolvenza 0..1 verso fade_color
+        self.fade_color = (0.0, 0.0, 0.0)
+        self.xf = (1.0, 0.0, 0.0)  # zoom, spostamento x, y (frazioni del fotogramma)
+        self.texts = []  # [(scritta, opacità)]
+        self.item_id = None
 
 
 def luma_hist(img: np.ndarray, step: int = 4) -> np.ndarray:
@@ -311,13 +317,21 @@ class Engine(QObject):
         return lut, key
 
     def _render(self, t, still=False):
+        f = self._render_base(t, still)
+        if f is not None and self.mode == "timeline":
+            pr = self.get_project()
+            f.texts = [(dict(x), pr.opacity_at(x, t)) for x in pr.texts_at(t)]
+        return f
+
+    def _render_base(self, t, still=False):
         pr = self.get_project()
+        it = None
         if self.mode == "timeline":
             it = pr.video_item_at(t)
             if it is None:
                 return Frame(t, None, label="")
             src = pr.source(it["source"])
-            st = it["src_in"] + (t - it["start"])
+            st = pr.src_time(it, t)
             grades = pr.grades_for_item(it)
             label = it.get("origin", it["source"])
         else:
@@ -350,10 +364,22 @@ class Engine(QObject):
                     self._cpu_cache.popitem(last=False)
             img = cl.apply(img)
             graded = True
+        fade, fcol = (0.0, (0.0, 0.0, 0.0))
+        if it is not None:
+            fade, fcol = pr.fade_at(it, t)
+            if fade > 0.001 and self.cpu_grade:
+                c = np.array(fcol, dtype=np.float32) * 255.0
+                img = (img.astype(np.float32) * (1.0 - fade) + c * fade).astype(np.uint8)
         hist = None
         if still:
             if graded or lut is None:
                 hist = luma_hist(img, 4)
             else:
                 hist = luma_hist(color.apply_lut_image(np.ascontiguousarray(img[::4, ::4]), lut), 1)
-        return Frame(t, img, lut, key, graded, hist, label)
+        fr = Frame(t, img, lut, key, graded, hist, label)
+        if it is not None:
+            fr.fade, fr.fade_color = fade, fcol
+            fr.xf = (float(it.get("zoom", 1.0) or 1.0), float(it.get("pos_x", 0.0) or 0.0),
+                     float(it.get("pos_y", 0.0) or 0.0))
+            fr.item_id = it["id"]
+        return fr

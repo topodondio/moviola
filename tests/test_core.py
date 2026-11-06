@@ -104,8 +104,78 @@ def test_export(tmp):
     pr.save(os.path.join(tmp, "prova.moviola")); P.Project.load(os.path.join(tmp, "prova.moviola"))
     print("export ok:", out)
 
-if __name__ == "__main__":
+def main():
     test_model(); test_color()
     with tempfile.TemporaryDirectory() as t:
         test_export(t)
+        test_effects(t)
     print("TUTTI I TEST OK")
+
+
+def test_effects(tmp):
+    """Velocità, dissolvenze, zoom/posizione, scritte."""
+    a = os.path.join(tmp, "a.mp4")
+    make_clip(a, 8, "red", 440)
+    pr = P.Project(); store = audio.AudioStore()
+    s = pr.add_source(a, info(8)); store.register(s["id"], media.make_audio_cache(a))
+    pr.add_subclip("clip1", 0, 4)
+    its = pr.append_to_timeline(["clip1.1"])
+    v = [i for i in its if i["kind"] == "video"][0]
+    pr.append_to_timeline(["clip1.1"])
+    # velocità 2x: il primo pezzo dura 2 s e il secondo slitta indietro
+    pr.set_speed([v["id"]], 2.0)
+    assert abs(pr.item_dur(v) - 2.0) < 1e-6
+    second = [i for i in pr.items_on("video", 0)][1]
+    assert abs(second["start"] - 2.0) < 1e-6, second["start"]
+    assert abs(pr.timeline_end() - 6.0) < 1e-6
+    a_it = [i for i in pr.linked(v) if i["kind"] == "audio"][0]
+    assert abs(pr.item_dur(a_it) - 2.0) < 1e-6
+    m = audio.mix_timeline(pr, store, 0.0, 48000 * 2); assert np.abs(m).max() > 0.05
+    # dissolvenza da bianco sul primo, a nero sul secondo; zoom e posizione sul secondo
+    v["fade_in"] = 1.0; v["fade_in_color"] = "white"
+    second["fade_out"] = 1.0
+    second["zoom"] = 0.5; second["pos_x"] = 0.25
+    amt, col = pr.fade_at(v, 0.0); assert amt == 1.0 and col == (1.0, 1.0, 1.0)
+    # taglio dentro la dissolvenza: il pezzo a destra non deve rifarla
+    # scritta
+    t = pr.add_text(1.0, dur=2.0, text="Ciao")
+    assert t["track"] == 2 and pr.texts_at(1.5) == [t]
+    pr.trim_item(t["id"], "right", 3.6)
+    assert abs(pr.item_end(t) - 3.6) < 1e-6
+    rendered = []
+
+    try:
+        import PIL  # noqa: F401  (solo per il test: nell'app le scritte le disegna Qt)
+    except ImportError:
+        print("PIL non installato: salto la verifica delle scritte"); return
+
+    def renderer(item, W, H, path):
+        from PIL import Image, ImageDraw
+        im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(im).rectangle([0, 0, 60, 40], fill=(0, 255, 0, 255))
+        im.save(path); rendered.append(item["id"]); return True
+
+    out = os.path.join(tmp, "fx.mp4")
+    cmd, wd, dur = export.build_job(pr, store, out, text_renderer=renderer)
+    err = export.run_job(cmd, wd, dur); assert err is None, err
+    assert rendered == [t["id"]]
+
+    def frame(ts):
+        fr = subprocess.run([paths.ffmpeg_exe(), "-v", "error", "-ss", f"{ts}", "-i", out, "-frames:v", "1",
+                             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        return np.frombuffer(fr, np.uint8).reshape(360, 640, 3).astype(int)
+
+    f0 = frame(0.0); assert f0.mean() > 230, f0.mean()          # bianco all'inizio
+    f2 = frame(2.0)
+    assert f2[20, 30, 1] > 200 and f2[20, 30, 0] < 60          # scritta verde in alto a sinistra
+    f3 = frame(3.6)
+    assert f3[:, :160].mean() < 15                              # zoom 0.5 spostato a destra: sinistra nera
+    assert f3[:, 330:620].mean() > 40
+    f5 = frame(5.9); assert f5.mean() < 30                      # dissolvenza a nero alla fine
+    r = subprocess.run([paths.ffmpeg_exe(), "-i", out], capture_output=True, text=True).stderr
+    assert "Duration: 00:00:06" in r or "Duration: 00:00:05.9" in r, r
+    print("effetti ok")
+
+
+if __name__ == "__main__":
+    main()

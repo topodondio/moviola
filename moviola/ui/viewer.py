@@ -8,9 +8,11 @@ CpuViewer, che riceve fotogrammi già corretti dal motore.
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QSurfaceFormat
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QSurfaceFormat
 from PySide6.QtWidgets import QWidget
+
+from .text_render import draw_text, text_box
 
 try:
     from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -39,12 +41,15 @@ uniform sampler2D img;
 uniform sampler3D lut;
 uniform float lutSize;
 uniform int useLut;
+uniform float fadeAmt;
+uniform vec3 fadeColor;
 void main() {
     vec3 c = texture(img, v_uv).rgb;
     if (useLut == 1) {
         vec3 s = (c * (lutSize - 1.0) + 0.5) / lutSize;
         c = texture(lut, s).rgb;
     }
+    c = mix(c, fadeColor, fadeAmt);
     outColor = vec4(c, 1.0);
 }
 """
@@ -74,27 +79,115 @@ def fit_rect(fw, fh, ww, wh, aspect):
     return (ww - w) / 2, (wh - h) / 2, w, h
 
 
+class TextOverlay(QWidget):
+    """Strato trasparente sopra al visore: disegna le scritte e permette di
+    spostare scritte e inquadratura trascinando."""
+
+    drag_begin = Signal(float, float)  # punto (frazione del fotogramma)
+    drag_move = Signal(float, float)  # spostamento dall'inizio (frazione)
+    drag_end = Signal()
+
+    def __init__(self, viewer):
+        super().__init__(viewer)
+        self.viewer = viewer
+        self.texts = []
+        self.highlight = None  # id della scritta selezionata
+        self._press = None
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setMouseTracking(False)
+
+    def project_rect(self):
+        x, y, w, h = fit_rect(1, 1, self.width(), self.height(), self.viewer.aspect)
+        return QRectF(x, y, w, h)
+
+    def paintEvent(self, e):
+        if not self.texts:
+            return
+        p = QPainter(self)
+        fr = self.project_rect()
+        p.setClipRect(fr)
+        for item, op in self.texts:
+            draw_text(p, fr, item, op)
+            if item.get("id") == self.highlight:
+                p.setOpacity(1.0)
+                p.setPen(QPen(QColor(232, 163, 61), 1, Qt.DashLine))
+                p.setBrush(Qt.NoBrush)
+                p.drawRect(text_box(item, fr))
+        p.end()
+
+    def mousePressEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            return
+        fr = self.project_rect()
+        if fr.width() <= 0:
+            return
+        pos = e.position()
+        self._press = pos
+        self.drag_begin.emit((pos.x() - fr.left()) / fr.width(), (pos.y() - fr.top()) / fr.height())
+
+    def mouseMoveEvent(self, e):
+        if self._press is None:
+            return
+        fr = self.project_rect()
+        d = e.position() - self._press
+        self.drag_move.emit(d.x() / fr.width(), d.y() / fr.height())
+
+    def mouseReleaseEvent(self, e):
+        if self._press is not None:
+            self._press = None
+            self.drag_end.emit()
+
+
 class _Base:
+    def _init_base(self):
+        self.aspect = 16 / 9
+        self._img = None
+        self._xf = (1.0, 0.0, 0.0)
+        self._fade = 0.0
+        self._fade_color = (0.0, 0.0, 0.0)
+        self.overlay = TextOverlay(self)
+
+    def _base_frame(self, frame):
+        self._xf = frame.xf
+        self._fade = frame.fade
+        self._fade_color = frame.fade_color
+        self.overlay.texts = frame.texts
+        self.overlay.update()
+
     def _frame_rect(self, ww, wh):
-        # l'immagine dentro al formato del progetto (bande nere se diverso)
+        """Rettangolo dell'immagine: adattata al formato del progetto, poi
+        zoom e spostamento del pezzo."""
         x, y, w, h = fit_rect(1, 1, ww, wh, self.aspect)
         if self._img is None:
             return x, y, w, h
         fh, fw = self._img.shape[:2]
         fa = fw / max(fh, 1)
         ix, iy, iw, ih = fit_rect(fw, fh, w, h, fa)
-        return x + ix, y + iy, iw, ih
+        zoom, px, py = self._xf
+        iw2, ih2 = iw * zoom, ih * zoom
+        cx = x + w / 2 + px * w
+        cy = y + h / 2 + py * h
+        return cx - iw2 / 2, cy - ih2 / 2, iw2, ih2
+
+    def _bg_color(self):
+        """Colore delle bande (nero che sfuma verso il colore della dissolvenza)."""
+        a = self._fade
+        return tuple(c * a for c in self._fade_color)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.overlay.setGeometry(self.rect())
 
 
 if QOpenGLWidget is not None:
 
-    class GlViewer(QOpenGLWidget, _Base):
+    class GlViewer(_Base, QOpenGLWidget):
         failed = Signal(str)
 
         def __init__(self, parent=None):
             super().__init__(parent)
-            self.aspect = 16 / 9
-            self._img = None
+            self._init_base()
             self._img_dirty = False
             self._lut = None
             self._lut_key = "identity"
@@ -150,6 +243,8 @@ if QOpenGLWidget is not None:
                 self.u_lut = GL.glGetUniformLocation(prog, "lut")
                 self.u_size = GL.glGetUniformLocation(prog, "lutSize")
                 self.u_use = GL.glGetUniformLocation(prog, "useLut")
+                self.u_fade = GL.glGetUniformLocation(prog, "fadeAmt")
+                self.u_fcol = GL.glGetUniformLocation(prog, "fadeColor")
                 self._ok = True
                 self._img_dirty = self._img is not None
                 self._lut_dirty = self._lut is not None
@@ -159,6 +254,7 @@ if QOpenGLWidget is not None:
                 self.failed.emit(str(e))
 
         def set_frame(self, frame):
+            self._base_frame(frame)
             self._img = frame.img
             self._img_dirty = frame.img is not None
             if frame.lut_key != self._lut_key:
@@ -185,10 +281,11 @@ if QOpenGLWidget is not None:
                 x, y, w, h = fit_rect(1, 1, ww, wh, self.aspect)
                 GL.glEnable(GL.GL_SCISSOR_TEST)
                 GL.glScissor(int(x), int(y), int(w), int(h))
-                GL.glClearColor(0, 0, 0, 1)
+                bg = self._bg_color() if self._img is not None else (0.0, 0.0, 0.0)
+                GL.glClearColor(bg[0], bg[1], bg[2], 1)
                 GL.glClear(GL.GL_COLOR_BUFFER_BIT)
-                GL.glDisable(GL.GL_SCISSOR_TEST)
                 if self._img is None:
+                    GL.glDisable(GL.GL_SCISSOR_TEST)
                     return
                 GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
                 GL.glActiveTexture(GL.GL_TEXTURE0)
@@ -216,34 +313,41 @@ if QOpenGLWidget is not None:
                 GL.glUniform1i(self.u_lut, 1)
                 GL.glUniform1f(self.u_size, float(self._lut.shape[0]) if use else 33.0)
                 GL.glUniform1i(self.u_use, use)
+                GL.glUniform1f(self.u_fade, float(self._fade))
+                GL.glUniform3f(self.u_fcol, *[float(c) for c in self._fade_color])
                 fx, fy, fw, fh = self._frame_rect(ww, wh)
                 GL.glUniform4f(self.u_rect, fx / ww * 2 - 1, 1 - (fy + fh) / wh * 2, fw / ww * 2, fh / wh * 2)
                 GL.glBindVertexArray(self.vao)
                 GL.glDrawArrays(GL.GL_TRIANGLE_STRIP, 0, 4)
+                GL.glDisable(GL.GL_SCISSOR_TEST)
                 GL.glBindVertexArray(0)
                 GL.glUseProgram(0)
                 GL.glActiveTexture(GL.GL_TEXTURE0)
             except Exception as e:
                 self._ok = False
+                try:
+                    self.GL.glDisable(self.GL.GL_SCISSOR_TEST)
+                except Exception:
+                    pass
                 self.failed.emit(str(e))
 else:
     GlViewer = None
 
 
-class CpuViewer(QWidget, _Base):
+class CpuViewer(_Base, QWidget):
     """Ripiego senza scheda video: disegna con QPainter."""
 
     failed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.aspect = 16 / 9
-        self._img = None
+        self._init_base()
         self._qimg = None
         self.setMinimumSize(320, 180)
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
 
     def set_frame(self, frame):
+        self._base_frame(frame)
         self._img = frame.img
         if frame.img is None:
             self._qimg = None
@@ -263,11 +367,11 @@ class CpuViewer(QWidget, _Base):
         p = QPainter(self)
         p.fillRect(self.rect(), BG)
         x, y, w, h = fit_rect(1, 1, self.width(), self.height(), self.aspect)
-        p.fillRect(int(x), int(y), int(w), int(h), Qt.black)
+        bg = self._bg_color() if self._qimg is not None else (0.0, 0.0, 0.0)
+        p.fillRect(QRectF(x, y, w, h), QColor.fromRgbF(*bg))
         if self._qimg is not None:
             fx, fy, fw, fh = self._frame_rect(self.width(), self.height())
+            p.setClipRect(QRectF(x, y, w, h))
             p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            from PySide6.QtCore import QRectF
-
             p.drawImage(QRectF(fx, fy, fw, fh), self._qimg)
         p.end()
