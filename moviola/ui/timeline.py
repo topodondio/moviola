@@ -527,6 +527,11 @@ class TimelineView(QWidget):
             self.changed.emit()
             self.host.timeline_edit_done()
 
+    def mouseDoubleClickEvent(self, e):
+        it = self.item_at(e.position())
+        if it is not None:
+            self.action.emit("open_effects", [it["id"]])
+
     def wheelEvent(self, e):
         dx = e.angleDelta().x()
         dy = e.angleDelta().y()
@@ -609,6 +614,10 @@ class TimelineView(QWidget):
         pr = self.project
         its = [pr.item(i) for i in ids if pr.item(i)]
         m = QMenu(self)
+        m.addAction("Velocità ed effetti…", lambda: self.action.emit("open_effects", ids))
+        if any(i["kind"] == "video" for i in its):
+            m.addAction("Colore…", lambda: self.action.emit("open_color", ids))
+        m.addSeparator()
         m.addAction("Taglia alla testina\tB", lambda: self.action.emit("split", ids))
         m.addAction("Elimina\tCanc", lambda: self.action.emit("delete", ids))
         m.addAction("Elimina e chiudi lo spazio\tMaiusc+Canc", lambda: self.action.emit("ripple_delete", ids))
@@ -671,7 +680,12 @@ class TimelinePanel(QWidget):
         self.btn_fit = QPushButton("Adatta")
         self.btn_text = QPushButton("T  Scritta")
         self.btn_text.setToolTip("Aggiungi una scritta alla testina (T)")
-        for b in (self.btn_split, self.btn_snap, self.btn_fit, self.btn_text):
+        self.btn_effects = QPushButton("Effetti")
+        self.btn_effects.setToolTip("Velocità, curva di velocità, zoom e posizione, bande nere, dissolvenze "
+                                    "del pezzo selezionato (doppio clic su un pezzo)")
+        self.btn_color = QPushButton("Colore")
+        self.btn_color.setToolTip("Correzione colore")
+        for b in (self.btn_split, self.btn_snap, self.btn_fit, self.btn_text, self.btn_effects, self.btn_color):
             bar.addWidget(b)
         bar.addStretch(1)
         bar.addWidget(QLabel("Zoom"))

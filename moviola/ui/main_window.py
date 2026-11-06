@@ -164,10 +164,11 @@ class MainWindow(QMainWindow):
         self.color_panel = ColorPanel()
         self.inspector = Inspector()
         self.right_tabs = QTabWidget()
-        self.right_tabs.addTab(self.inspector, "Clip")
+        self.right_tabs.addTab(self.inspector, "Effetti")
         self.right_tabs.addTab(self.color_panel, "Colore")
-        self.right_tabs.setCurrentIndex(1)
-        d2 = QDockWidget("Proprietà", self)
+        self.right_tabs.setCurrentIndex(0)
+        self.right_tabs.setStyleSheet("QTabBar::tab { padding: 6px 18px; font-weight: 600; }")
+        d2 = QDockWidget("Effetti e colore", self)
         d2.setObjectName("dock_colore")
         d2.setWidget(self.right_tabs)
         d2.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
@@ -326,6 +327,10 @@ class MainWindow(QMainWindow):
         self.act_gpu = act(m, "Anteprima con la scheda video (OpenGL)", self.set_gpu, checkable=True,
                            checked=not self.engine.cpu_grade)
 
+        act(m, "Pannello Effetti (velocità, inquadratura, dissolvenze, scritte)", lambda: self.show_tab(0),
+            "Ctrl+3")
+        act(m, "Pannello Colore", lambda: self.show_tab(1), "Ctrl+4")
+
         m = mb.addMenu("Aiuto")
         act(m, "Scorciatoie da tastiera", self.show_shortcuts, "F1")
         act(m, "Cartella cache (proxy e audio)", lambda: QDesktopServices.openUrl(
@@ -361,6 +366,8 @@ class MainWindow(QMainWindow):
         ins.action.connect(self._inspector_action)
         self.timeline.btn_text.clicked.connect(self.add_text)
         self.timeline.btn_settings.clicked.connect(self.timeline_settings)
+        self.timeline.btn_effects.clicked.connect(lambda: self.show_tab(0))
+        self.timeline.btn_color.clicked.connect(lambda: self.show_tab(1))
         cp.edit.connect(self._grade_edit)
         cp.target_changed.connect(lambda k: self.refresh_color_panel())
         cp.action.connect(self._color_action)
@@ -838,6 +845,12 @@ class MainWindow(QMainWindow):
                 self.bin.select([ref])
                 self.selected_ref = ref
             return
+        elif action == "open_effects":
+            self.show_tab(0)
+            return
+        elif action == "open_color":
+            self.show_tab(1)
+            return
         elif action == "add_video_track":
             pr.checkpoint()
             pr.add_track("video")
@@ -883,6 +896,16 @@ class MainWindow(QMainWindow):
         self._apply_aspect()
         self._after_timeline_edit()
         self.statusBar().showMessage(f"Progetto: {vals['width']}×{vals['height']}, {vals['fps']:g} fps", 4000)
+
+    def show_tab(self, index):
+        """Mostra il pannello Effetti (0) o Colore (1), anche se era stato chiuso o staccato."""
+        dock = self.right_tabs.parentWidget()
+        while dock is not None and not isinstance(dock, QDockWidget):
+            dock = dock.parentWidget()
+        if dock is not None:
+            dock.show()
+            dock.raise_()
+        self.right_tabs.setCurrentIndex(index)
 
     def _update_settings_label(self):
         st = self.project.data["settings"]

@@ -62,7 +62,9 @@ Se il doppio clic su Mac non funziona, da Terminale: `bash avvia_mac.command`.
    Si applicano in quest'ordine (clip → pezzo → timeline). Copia/incolla con
    Ctrl/Cmd+Maiusc+C / V su più elementi selezionati (Ctrl/Cmd+clic).
    I preset si salvano dal menu Colore. Tasto `\` = prima/dopo.
-6. **Pannello Clip** (a destra, accanto a Colore): seleziona un pezzo in
+6. **Pannello Effetti** (a destra, scheda accanto a Colore; si apre anche
+   con il pulsante «Effetti» sulla timeline, con un doppio clic su un pezzo
+   o dal clic destro → «Velocità ed effetti…»): seleziona un pezzo in
    timeline e regola
    - **velocità** (10–800 %, con pulsanti 25/50/100/200/400 %): il pezzo
      cambia durata e ciò che segue si sposta; l'audio collegato segue;

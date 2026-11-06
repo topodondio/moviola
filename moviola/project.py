@@ -499,42 +499,45 @@ class Project:
 
     def trim_item(self, iid, edge, t, linked=True):
         """Allunga/accorcia un pezzo dal bordo 'left' o 'right' fino al tempo t
-        della timeline, entro i limiti del file sorgente."""
+        della timeline, entro i limiti del file sorgente. Finché video e audio
+        sono collegati cambiano insieme, della stessa quantità."""
         it = self.item(iid)
         if it is None:
             return
         group = self.linked(it) if linked else [it]
         t = self.snap(t)
         fr = self.frame()
-        targets = []
+        edge_t = it["start"] if edge == "left" else self.item_end(it)
+        d = t - edge_t
+        # spostamento consentito a tutti i pezzi del gruppo (restano a sincrono)
+        lo, hi = -1e18, 1e18
         for g in group:
             sp = self.speed(g)
             text = g["kind"] == "text"
             src = self.source(g["source"]) if not text else None
-            dur = src["duration"] if src else (1e9 if text else g["src_out"])
             length = self.item_dur(g)
             if edge == "left":
-                if abs(g["start"] - it["start"]) > 1e-6:
-                    continue
-                d = t - g["start"]
-                d = max(d, -g["start"]) if text else max(d, -g["src_in"] / sp, -g["start"])
-                d = min(d, length - fr)
+                lo = max(lo, -g["start"] if text else max(-g["src_in"] / sp, -g["start"]))
+                hi = min(hi, length - fr)
+            else:
+                dur = src["duration"] if src else (1e9 if text else g["src_out"])
+                lo = max(lo, -(length - fr))
+                hi = min(hi, (dur - g["src_out"]) / sp)
+        d = max(lo, min(hi, d))
+        if abs(d) < 1e-9:
+            return
+        for g in group:
+            sp = self.speed(g)
+            if edge == "left":
                 g["start"] += d
-                if text:
+                if g["kind"] == "text":
                     g["src_out"] -= d
                 else:
                     g["src_in"] += d * sp
-                targets.append(g)
             else:
-                if abs(self.item_end(g) - self.item_end(it)) > 1e-6:
-                    continue
-                d = t - self.item_end(g)
-                d = min(d, (dur - g["src_out"]) / sp)
-                d = max(d, -(length - fr))
                 g["src_out"] += d * sp
-                targets.append(g)
-        ids = {g["id"] for g in targets}
-        for g in targets:
+        ids = {g["id"] for g in group}
+        for g in group:
             self.clear_range(lane(g), g["track"], g["start"], self.item_end(g), exclude=ids)
 
     def split_at(self, t, ids=None):
