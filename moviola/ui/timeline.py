@@ -315,9 +315,14 @@ class TimelineView(QWidget):
                         QPointF(rect.right(), rect.bottom())]
             p.drawPolygon(QPolygonF(poly))
         badges = []
-        sp = float(it.get("speed", 1.0) or 1.0)
-        if abs(sp - 1.0) > 1e-3:
-            badges.append(f"{sp * 100:.0f}%")
+        if it.get("speed_curve"):
+            badges.append("velocità ∿")
+        else:
+            sp = float(it.get("speed", 1.0) or 1.0)
+            if abs(sp - 1.0) > 1e-3:
+                badges.append(f"{sp * 100:.0f}%")
+        if kind == "video" and float(it.get("bars", 0.0) or 0.0) > 0:
+            badges.append("▭")
         if kind == "video" and (abs(float(it.get("zoom", 1.0) or 1.0) - 1) > 1e-3 or it.get("pos_x") or it.get("pos_y")):
             badges.append("⤢")
         if kind == "audio" and abs(it.get("gain_db", 0.0)) > 0.05:
@@ -654,6 +659,10 @@ class TimelinePanel(QWidget):
         self.title = QLabel("TIMELINE")
         self.title.setObjectName("modeLabel")
         bar.addWidget(self.title)
+        bar.addSpacing(8)
+        self.btn_settings = QPushButton("25 fps · 1920×1080")
+        self.btn_settings.setToolTip("Impostazioni del progetto: fps, risoluzione, bande nere (Ctrl/Cmd+,)")
+        bar.addWidget(self.btn_settings)
         bar.addSpacing(12)
         self.btn_split = QPushButton("✂ Taglia (B)")
         self.btn_snap = QPushButton("Aggancio (N)")

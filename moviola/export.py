@@ -13,6 +13,7 @@ import tempfile
 import threading
 
 from . import audio, color, paths
+from . import speed as spd
 from .media import parse_ffmpeg_time
 
 FORMATS = {
@@ -29,6 +30,32 @@ def _fit_size(src, W, H, zoom):
     w = max(2, int(round(sw * f / 2)) * 2)
     h = max(2, int(round(sh * f / 2)) * 2)
     return w, h
+
+
+def _bars_filter(bars, H):
+    """Bande nere sopra e sotto (bars = altezza di ciascuna, frazione del fotogramma)."""
+    bh = int(round(max(0.0, min(0.49, bars)) * H))
+    if bh <= 0:
+        return ""
+    return (f",drawbox=x=0:y=0:w=iw:h={bh}:color=black:t=fill"
+            f",drawbox=x=0:y=ih-{bh}:w=iw:h={bh}:color=black:t=fill")
+
+
+def _retime_expr(it, src_t, cs):
+    """Espressione per setpts: dal tempo nel file (relativo a src_t) al tempo
+    in uscita (relativo all'inizio del tratto). Lineare con velocità
+    costante, a tratti con la curva di velocità."""
+    tin = "(PTS-STARTPTS)*TB"
+    if spd.curve_points(it) is None:
+        return f"(PTS-STARTPTS)/{spd.const_speed(it):g}"
+    base = src_t - it["src_in"]
+    knots = [(sv - base, x - cs) for sv, x in spd.inverse_knots(it)]
+    expr = None
+    for (p0, q0), (p1, q1) in reversed(list(zip(knots[:-1], knots[1:]))):
+        k = (q1 - q0) / max(p1 - p0, 1e-9)
+        lin = f"({q0:.6f}+({tin}-({p0:.6f}))*{k:.6f})"
+        expr = lin if expr is None else f"if(lt({tin},{p1:.6f}),{lin},{expr})"
+    return f"'({expr})/TB'"
 
 
 def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=None, start=0.0, end=None,
@@ -59,7 +86,6 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
         if it is None or src is None or not os.path.exists(src["path"]):
             chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={dur:.6f},format=rgb24,setsar=1[s{k}]")
             continue
-        sp = project.speed(it)
         item_dur = project.item_dur(it)
         off = seg["start"] - it["start"]
         fi = min(float(it.get("fade_in", 0) or 0), item_dur)
@@ -74,15 +100,16 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
         lead = off - cs
         idx = n_inputs
         n_inputs += 1
-        src_t = it["src_in"] + cs * sp
-        inputs += ["-ss", f"{src_t:.6f}", "-t", f"{(lead + dur) * sp + 0.5:.6f}", "-i", src["path"]]
+        src_t = project.src_time(it, it["start"] + cs)
+        src_end = project.src_time(it, it["start"] + cs + lead + dur)
+        inputs += ["-ss", f"{src_t:.6f}", "-t", f"{src_end - src_t + 0.5:.6f}", "-i", src["path"]]
         zoom = float(it.get("zoom", 1.0) or 1.0)
         w1, h1 = _fit_size(src, W, H, zoom)
         x = (W - w1) / 2 + float(it.get("pos_x", 0.0) or 0.0) * W
         y = (H - h1) / 2 + float(it.get("pos_y", 0.0) or 0.0) * H
         grades = project.grades_for_item(it)
         key = color.grade_key(grades)
-        c = f"[{idx}:v]setpts=(PTS-STARTPTS)/{sp:g},fps={fps:g},scale={w1}:{h1}:flags=bicubic,setsar=1,format=rgb24"
+        c = f"[{idx}:v]setpts={_retime_expr(it, src_t, cs)},fps={fps:g},scale={w1}:{h1}:flags=bicubic,setsar=1,format=rgb24"
         if key != "identity":
             if key not in lut_cache:
                 name = f"lut_{len(lut_cache)}.cube"
@@ -99,12 +126,17 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
         if fo > 0:
             col = "white" if it.get("fade_out_color") == "white" else "black"
             f += f",fade=t=out:st={item_dur - fo - cs:.6f}:d={fo:.6f}:color={col}"
+        f += _bars_filter(float(it.get("bars", 0.0) or 0.0), H)
         f += f",trim=start={lead:.6f}:duration={dur:.6f},setpts=PTS-STARTPTS,format=rgb24,setsar=1[s{k}]"
         chains.append(f)
 
     n = len(segs)
     chains.append("".join(f"[s{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0[cat]")
     last = "cat"
+    gbars = float(project.data["settings"].get("bars", 0.0) or 0.0)
+    if gbars > 0:
+        chains.append(f"[cat]format=rgb24{_bars_filter(gbars, H)}[catb]")
+        last = "catb"
 
     # scritte: PNG trasparenti sovrapposti al montaggio
     if text_renderer is not None:

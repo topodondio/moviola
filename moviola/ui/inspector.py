@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
+from .. import speed as spd
+from .speed_curve import SpeedCurveWidget
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFontComboBox, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QScrollArea, QSlider,
                                QStackedWidget, QVBoxLayout, QWidget)
@@ -118,6 +120,7 @@ class Inspector(QWidget):
         outer.addWidget(self.stack, 1)
         self._loading = False
         self._w = {}
+        self._speed_ui = {}
 
         # pagina vuota
         empty = QWidget()
@@ -179,7 +182,10 @@ class Inspector(QWidget):
 
     def _speed_group(self, kind):
         gb, f = _group("Velocità")
-        f.addRow(self._slider(kind, "speed", 10, 800, 5, 0, " %", 100, scale=100))
+        const = QWidget()
+        cl = QVBoxLayout(const)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.addWidget(self._slider(kind, "speed", 10, 800, 5, 0, " %", 100, scale=100))
         row = QHBoxLayout()
         for p in (25, 50, 100, 200, 400):
             b = QPushButton(f"{p}%")
@@ -187,7 +193,60 @@ class Inspector(QWidget):
             b.clicked.connect(lambda _=False, pp=p: (self._begin("speed_btn"), self._emit(kind, "speed", pp / 100)))
             row.addWidget(b)
         row.addStretch(1)
-        f.addRow(row)
+        cl.addLayout(row)
+        f.addRow(const)
+        chk = QCheckBox("Velocità variabile (curva)")
+        f.addRow(chk)
+        curve_box = QWidget()
+        vl = QVBoxLayout(curve_box)
+        vl.setContentsMargins(0, 0, 0, 0)
+        cw = SpeedCurveWidget()
+        cw.pressed.connect(lambda: self._begin("speed_curve"))
+        cw.changed.connect(lambda pts: self._emit(kind, "speed_curve", pts))
+        vl.addWidget(cw)
+        prow = QHBoxLayout()
+        preset = QComboBox()
+        preset.addItem("Modelli…", None)
+        for name, pts in spd.PRESETS.items():
+            preset.addItem(name, pts)
+
+        def use_preset(i):
+            pts = preset.itemData(i)
+            if pts and not self._loading:
+                self._begin("speed_preset")
+                cw.set_points(pts)
+                self._emit(kind, "speed_curve", pts)
+            preset.setCurrentIndex(0)
+
+        preset.currentIndexChanged.connect(use_preset)
+        flat = QPushButton("Piatta 1x")
+        flat.clicked.connect(lambda: (self._begin("speed_flat"), cw.set_points(None),
+                                      self._emit(kind, "speed_curve", [[0.0, 1.0], [1.0, 1.0]])))
+        prow.addWidget(preset, 1)
+        prow.addWidget(flat)
+        vl.addLayout(prow)
+        f.addRow(curve_box)
+        dur = QLabel("")
+        dur.setStyleSheet("color:#bbb;")
+        f.addRow(dur)
+
+        def toggled(on):
+            const.setVisible(not on)
+            curve_box.setVisible(on)
+            if self._loading:
+                return
+            self._begin("speed_mode")
+            if on:
+                v = self._w[(kind, "speed")][0].spin.value() / 100.0
+                pts = [[0.0, v], [1.0, v]]
+                cw.set_points(pts)
+                self._emit(kind, "speed_curve", pts)
+            else:
+                self._emit(kind, "speed_curve", None)
+
+        chk.toggled.connect(toggled)
+        curve_box.setVisible(False)
+        self._speed_ui[kind] = (chk, cw, dur, const, curve_box)
         note = QLabel("Cambia la durata del pezzo; ciò che segue in timeline si sposta. "
                       "L'audio collegato segue la stessa velocità.")
         note.setWordWrap(True)
@@ -216,6 +275,16 @@ class Inspector(QWidget):
         hint = QLabel("Puoi anche trascinare l'immagine nel visore.")
         hint.setStyleSheet("color:#808080; font-size:11px;")
         f.addRow(hint)
+        lay.addWidget(gb)
+        gb, f = _group("Bande nere")
+        f.addRow("Altezza", self._slider("video", "bars", 0, 40, 0.5, 1, " %", 0, scale=100))
+        row = QHBoxLayout()
+        for lab in ("2.39:1", "2:1", "1.85:1", "Nessuna"):
+            b = QPushButton(lab)
+            b.setToolTip("Bande sopra e sotto per un formato panoramico" if lab != "Nessuna" else "")
+            b.clicked.connect(lambda _=False, a=lab: self.action.emit("bars:" + a))
+            row.addWidget(b)
+        f.addRow(row)
         lay.addWidget(gb)
         gb, f = _group("Dissolvenze")
         cols = [("da/verso nero", "black"), ("da/verso bianco", "white")]
@@ -361,6 +430,18 @@ class Inspector(QWidget):
                         w.setCurrentIndex(i)
                 elif isinstance(w, QCheckBox):
                     w.setChecked(bool(val))
+            if kind in self._speed_ui:
+                chk, cw, dlab, const, box = self._speed_ui[kind]
+                pts = spd.curve_points(item)
+                chk.setChecked(pts is not None)
+                const.setVisible(pts is None)
+                box.setVisible(pts is not None)
+                cw.set_points(pts)
+                if pts is None:
+                    self._w[(kind, "speed")][0].set_value(spd.const_speed(item) * 100)
+                if duration is not None:
+                    dlab.setText(f"Durata in timeline: {duration:.2f} s  ·  velocità media "
+                                 f"{spd.mean_speed(item) * 100:.0f}%")
             if kind == "text":
                 if self.text_edit.toPlainText() != item.get("text", ""):
                     self.text_edit.setPlainText(item.get("text", ""))

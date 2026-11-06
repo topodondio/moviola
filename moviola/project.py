@@ -16,13 +16,14 @@ import os
 import uuid
 
 from . import color
+from . import speed as spd
 
 VERSION = 2
 MIN_LEN_FRAMES = 1
 
 FADE_COLORS = {"black": (0.0, 0.0, 0.0), "white": (1.0, 1.0, 1.0)}
 
-VIDEO_DEFAULTS = {"speed": 1.0, "zoom": 1.0, "pos_x": 0.0, "pos_y": 0.0, "fade_in": 0.0, "fade_out": 0.0,
+VIDEO_DEFAULTS = {"speed": 1.0, "bars": 0.0, "zoom": 1.0, "pos_x": 0.0, "pos_y": 0.0, "fade_in": 0.0, "fade_out": 0.0,
                   "fade_in_color": "black", "fade_out_color": "black"}
 AUDIO_DEFAULTS = {"speed": 1.0, "gain_db": 0.0, "fade_in": 0.0, "fade_out": 0.0}
 TEXT_DEFAULTS = {"text": "Titolo", "font": "", "size": 8.0, "color": "#ffffff", "bold": True, "italic": False,
@@ -43,7 +44,7 @@ def new_project_data() -> dict:
     return {
         "version": VERSION,
         "app": "Moviola",
-        "settings": {"fps": 25.0, "width": 1920, "height": 1080, "auto": True},
+        "settings": {"fps": 25.0, "width": 1920, "height": 1080, "auto": True, "bars": 0.0},
         "next_source": 1,
         "sources": [],
         "subclips": [],
@@ -304,12 +305,15 @@ class Project:
     # ------------------------------------------------------- Pezzi timeline
     @staticmethod
     def speed(it) -> float:
-        return float(it.get("speed", 1.0) or 1.0)
+        """Velocità media (costante, oppure media della curva)."""
+        return spd.mean_speed(it)
 
     @staticmethod
     def item_dur(it):
         """Durata in timeline (tiene conto della velocità)."""
-        return (it["src_out"] - it["src_in"]) / Project.speed(it)
+        if it["kind"] == "text":
+            return it["src_out"] - it["src_in"]
+        return spd.item_dur(it)
 
     @staticmethod
     def item_end(it):
@@ -318,7 +322,24 @@ class Project:
     @staticmethod
     def src_time(it, t):
         """Tempo nel file sorgente corrispondente al tempo t della timeline."""
-        return it["src_in"] + (t - it["start"]) * Project.speed(it)
+        return spd.src_time(it, t)
+
+    def _restrict(self, it, a, b):
+        """Riduce un pezzo all'intervallo [a, b] della timeline, mantenendo
+        identico il movimento (anche con la velocità a curva)."""
+        s = it["start"]
+        if it["kind"] == "text":
+            it["src_in"], it["src_out"] = 0.0, b - a
+            it["start"] = a
+            return
+        T = self.item_dur(it)
+        pts = spd.curve_points(it)
+        new_in = self.src_time(it, a)
+        new_out = self.src_time(it, b)
+        if pts is not None:
+            it["speed_curve"] = spd.sub_curve(pts, (a - s) / T, (b - s) / T)
+        it["src_in"], it["src_out"] = new_in, new_out
+        it["start"] = a
 
     def items_on(self, kind, track):
         return sorted((i for i in self.items if lane(i) == kind and i["track"] == track),
@@ -350,7 +371,6 @@ class Project:
                 new_items.append(it)
                 continue
             s, e = it["start"], self.item_end(it)
-            sp = self.speed(it)
             if e <= a + eps or s >= b - eps:
                 new_items.append(it)
                 continue
@@ -360,20 +380,17 @@ class Project:
                 right = copy.deepcopy(it)
                 right["id"] = _uid()
                 right["link"] = None
-                it["src_out"] = it["src_in"] + (a - s) * sp
-                right["src_in"] = right["src_in"] + (b - s) * sp
-                right["start"] = b
+                self._restrict(right, b, e)
+                self._restrict(it, s, a)
                 it["link"] = None
                 it["fade_out"] = 0.0
                 right["fade_in"] = 0.0
                 new_items.extend([it, right])
                 continue
             if s < a:
-                it["src_out"] = it["src_in"] + (a - s) * sp
+                self._restrict(it, s, a)
             else:
-                cut = b - s
-                it["src_in"] += cut * sp
-                it["start"] = b
+                self._restrict(it, b, e)
             new_items.append(it)
         self.data["items"] = new_items
         self._cleanup_links()
@@ -537,13 +554,8 @@ class Project:
             right["id"] = _uid()
             if it.get("link"):
                 right["link"] = new_links.setdefault(it["link"], _uid())
-            if it["kind"] == "text":
-                it["src_out"] = t - s
-                right["src_out"] = e - t
-            else:
-                it["src_out"] = it["src_in"] + (t - s) * self.speed(it)
-                right["src_in"] = it["src_out"]
-            right["start"] = t
+            self._restrict(right, t, e)
+            self._restrict(it, s, t)
             it["fade_out"] = 0.0
             right["fade_in"] = 0.0
             self.items.append(right)
@@ -575,9 +587,35 @@ class Project:
                     g["link"] = None
 
     def set_speed(self, ids, speed):
-        """Cambia la velocità (anche dei collegati) lasciando fermo l'inizio;
-        quello che segue sulla timeline si sposta per non sovrapporsi."""
+        """Velocità costante (toglie l'eventuale curva)."""
         speed = max(0.1, min(8.0, float(speed)))
+
+        def apply(i):
+            i["speed"] = speed
+            i.pop("speed_curve", None)
+
+        self._retime(ids, apply)
+
+    def set_speed_curve(self, ids, points):
+        """Velocità variabile secondo una curva (None = torna costante)."""
+        if points:
+            pts = sorted(([float(u), min(spd.V_MAX, max(spd.V_MIN, float(v)))] for u, v in points),
+                         key=lambda p: p[0])
+            pts[0][0], pts[-1][0] = 0.0, 1.0
+        else:
+            pts = None
+
+        def apply(i):
+            if pts:
+                i["speed_curve"] = copy.deepcopy(pts)
+            else:
+                i.pop("speed_curve", None)
+
+        self._retime(ids, apply)
+
+    def _retime(self, ids, apply):
+        """Applica un cambio di velocità (anche ai collegati) lasciando fermo
+        l'inizio; quello che segue sulla timeline si sposta per non sovrapporsi."""
         groups = []
         seen = set()
         for iid in ids:
@@ -590,7 +628,7 @@ class Project:
         for g in sorted(groups, key=lambda gg: -max(self.item_end(i) for i in gg)):
             old_end = max(self.item_end(i) for i in g)
             for i in g:
-                i["speed"] = speed
+                apply(i)
             new_end = max(self.item_end(i) for i in g)
             delta = new_end - old_end
             gids = {i["id"] for i in g}

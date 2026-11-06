@@ -91,6 +91,7 @@ class TextOverlay(QWidget):
         super().__init__(viewer)
         self.viewer = viewer
         self.texts = []
+        self.bars = 0.0
         self.highlight = None  # id della scritta selezionata
         self._press = None
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -102,11 +103,15 @@ class TextOverlay(QWidget):
         return QRectF(x, y, w, h)
 
     def paintEvent(self, e):
-        if not self.texts:
+        if not self.texts and self.bars <= 0:
             return
         p = QPainter(self)
         fr = self.project_rect()
         p.setClipRect(fr)
+        if self.bars > 0:
+            bh = round(min(0.49, self.bars) * fr.height())
+            p.fillRect(QRectF(fr.left(), fr.top(), fr.width(), bh), Qt.black)
+            p.fillRect(QRectF(fr.left(), fr.bottom() - bh, fr.width(), bh), Qt.black)
         for item, op in self.texts:
             draw_text(p, fr, item, op)
             if item.get("id") == self.highlight:
@@ -153,6 +158,7 @@ class _Base:
         self._fade = frame.fade
         self._fade_color = frame.fade_color
         self.overlay.texts = frame.texts
+        self.overlay.bars = max(frame.bars) if frame.bars else 0.0
         self.overlay.update()
 
     def _frame_rect(self, ww, wh):

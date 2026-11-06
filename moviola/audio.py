@@ -10,6 +10,8 @@ import wave
 
 import numpy as np
 
+from . import speed as spd
+
 RATE = 48000
 CHANNELS = 2
 
@@ -69,9 +71,10 @@ def _item_chunk(data, it, a, b, rate):
     n = int(round((b - a) * rate))
     if n <= 0:
         return None
-    sp = float(it.get("speed", 1.0) or 1.0)
+    curve = spd.curve_points(it) is not None
+    sp = spd.const_speed(it)
     src0 = (it["src_in"] + (a - it["start"]) * sp) * rate
-    if abs(sp - 1.0) < 1e-6:
+    if abs(sp - 1.0) < 1e-6 and not curve:
         i0 = int(round(src0))
         i1 = min(i0 + n, data.shape[0])
         if i1 <= max(i0, 0):
@@ -80,7 +83,10 @@ def _item_chunk(data, it, a, b, rate):
         lo = max(i0, 0)
         chunk[lo - i0:i1 - i0] = data[lo:i1]
     else:
-        pos = src0 + np.arange(n, dtype=np.float64) * sp
+        if curve:
+            pos = np.asarray(spd.src_time(it, a + np.arange(n, dtype=np.float64) / rate)) * rate
+        else:
+            pos = src0 + np.arange(n, dtype=np.float64) * sp
         valid = (pos >= 0) & (pos < data.shape[0] - 1)
         if not valid.any():
             return None
@@ -96,7 +102,7 @@ def _item_chunk(data, it, a, b, rate):
     fi = float(it.get("fade_in", 0.0) or 0.0)
     fo = float(it.get("fade_out", 0.0) or 0.0)
     if fi > 0 or fo > 0:
-        dur = (it["src_out"] - it["src_in"]) / sp
+        dur = spd.item_dur(it)
         u = (a - it["start"]) + np.arange(n, dtype=np.float32) / rate
         env = np.ones(n, dtype=np.float32)
         if fi > 0:
@@ -118,7 +124,7 @@ def mix_timeline(project, store: AudioStore, t0: float, nframes: int, rate: int 
         if it["track"] >= len(tracks) or tracks[it["track"]].get("muted"):
             continue
         s = it["start"]
-        e = s + (it["src_out"] - it["src_in"]) / float(it.get("speed", 1.0) or 1.0)
+        e = s + spd.item_dur(it)
         if e <= t0 or s >= t1:
             continue
         data = store.get(it["source"])

@@ -104,11 +104,56 @@ def test_export(tmp):
     pr.save(os.path.join(tmp, "prova.moviola")); P.Project.load(os.path.join(tmp, "prova.moviola"))
     print("export ok:", out)
 
+def test_curve_bars(tmp):
+    """Velocità a curva e bande nere: il fotogramma esportato deve venire dal
+    punto giusto del file (il rosso codifica il tempo sorgente)."""
+    from moviola import speed as spd
+    src = os.path.join(tmp, "tempo.mp4")
+    subprocess.run([paths.ffmpeg_exe(), "-y", "-v", "error", "-f", "lavfi", "-i",
+                    "color=black:s=640x360:r=25:d=8,format=rgb24,geq=r='T*25':g='T*25':b='T*25'",
+                    "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p", src], check=True)
+    pr = P.Project(); store = audio.AudioStore()
+    pr.add_source(src, dict(info(8), has_audio=False))
+    pr.add_subclip("clip1", 0, 6)
+    v = pr.append_to_timeline(["clip1.1"])[0]
+    pr.set_speed_curve([v["id"]], [[0, 0.5], [0.5, 1.0], [1, 3.0]])
+    T = pr.item_dur(v)
+    assert abs(pr.src_time(v, pr.item_end(v)) - 6.0) < 1e-3
+    # taglio: il movimento resta identico
+    before = [pr.src_time(v, x) for x in (0.5, T * 0.7)]
+    pr.split_at(T * 0.4)
+    after = [pr.src_time(pr.video_item_at(x), x) for x in (0.5, T * 0.7)]
+    assert max(abs(a_ - b_) for a_, b_ in zip(before, after)) < 0.02, (before, after)
+    left = pr.video_item_at(0.1)
+    left["bars"] = 0.1
+    pr.data["settings"]["bars"] = 0.05
+    out = os.path.join(tmp, "curva.mp4")
+    cmd, wd, dur = export.build_job(pr, store, out)
+    err = export.run_job(cmd, wd, dur); assert err is None, err
+
+    def frame(ts):
+        fr = subprocess.run([paths.ffmpeg_exe(), "-v", "error", "-ss", f"{ts}", "-i", out, "-frames:v", "1",
+                             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        return np.frombuffer(fr, np.uint8).reshape(360, 640, 3).astype(int)
+
+    for x in (0.4, 1.5, T * 0.6, T * 0.9):
+        it_ = pr.video_item_at(x)
+        want = pr.src_time(it_, x) * 25
+        got = frame(x)[180, 320, 0]
+        assert abs(got - want) < 8, (x, got, want)
+    f = frame(1.0)
+    assert f[30, 320].max() < 10 and f[40, 320, 0] > 5      # banda del pezzo (36 px)
+    f = frame(T * 0.9)
+    assert f[15, 320].max() < 10 and f[25, 320, 0] > 5      # banda generale (18 px)
+    print("curva e bande ok")
+
+
 def main():
     test_model(); test_color()
     with tempfile.TemporaryDirectory() as t:
         test_export(t)
         test_effects(t)
+        test_curve_bars(t)
     print("TUTTI I TEST OK")
 
 

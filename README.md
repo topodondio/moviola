@@ -5,7 +5,7 @@ Pensato per chi viene dalla fotografia: si lavora "a clip" e il colore si
 corregge con comandi fotografici (esposizione, contrasto, bilanciamento del
 bianco, curva, HSL per colore), senza nodi.
 
-> Stato: **prototipo 0.2**. Le funzioni base ci sono tutte; da collaudare
+> Stato: **prototipo 0.3**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
 ## Avvio
@@ -66,6 +66,14 @@ Se il doppio clic su Mac non funziona, da Terminale: `bash avvia_mac.command`.
    timeline e regola
    - **velocità** (10–800 %, con pulsanti 25/50/100/200/400 %): il pezzo
      cambia durata e ciò che segue si sposta; l'audio collegato segue;
+   - **velocità variabile (curva)**: spunta la casella e disegna la curva
+     (orizzontale: dall'inizio alla fine del pezzo; verticale: velocità da
+     0,1x a 8x, 1x al centro). Clic aggiunge un punto, trascina lo sposta,
+     doppio clic lo toglie; ci sono dei modelli pronti (es. rampa lento al
+     centro). La parte di clip mostrata resta la stessa, cambia il ritmo e
+     quindi la durata in timeline. Tagliando il pezzo il movimento non cambia;
+   - **bande nere** sopra e sotto: altezza in % o formati pronti 2.39:1,
+     2:1, 1.85:1;
    - **inquadratura**: zoom, spostamento orizzontale/verticale, *Adatta*,
      *Riempi* (niente bande), *Centra*; oppure trascina l'immagine nel visore;
    - **dissolvenze** in entrata e uscita, da/verso **nero** o **bianco**,
@@ -78,6 +86,14 @@ Se il doppio clic su Mac non funziona, da Terminale: `bash avvia_mac.command`.
    Si sposta trascinandola nel visore. Le scritte stanno sempre sopra al video.
 8. **Esporta** (Ctrl/Cmd+E): MP4 H.264 o MOV ProRes 422, sempre dai file
    originali.
+
+### Impostazioni del progetto
+
+Pulsante con fps e risoluzione sulla barra della timeline (o Ctrl/Cmd+,):
+risoluzione, **fotogrammi al secondo** e bande nere su tutto il montaggio.
+Gli fps del progetto sono quelli dell'anteprima della timeline e del video
+esportato; le clip con fps diversi vengono adattate ripetendo o saltando
+fotogrammi. Il visore sorgente mostra invece ogni clip ai suoi fps originali.
 
 ### Timeline
 

@@ -19,7 +19,7 @@ QUALITY_HEIGHTS = {"piena": 1080, "meta": 540, "quarto": 360}
 
 class Frame:
     __slots__ = ("t", "img", "lut", "lut_key", "graded", "hist", "label", "fade", "fade_color", "xf", "texts",
-                 "item_id")
+                 "item_id", "bars")
 
     def __init__(self, t, img=None, lut=None, lut_key="identity", graded=False, hist=None, label=""):
         self.t = t
@@ -34,6 +34,7 @@ class Frame:
         self.xf = (1.0, 0.0, 0.0)  # zoom, spostamento x, y (frazioni del fotogramma)
         self.texts = []  # [(scritta, opacità)]
         self.item_id = None
+        self.bars = (0.0, 0.0)  # bande nere: (del pezzo, generali)
 
 
 def luma_hist(img: np.ndarray, step: int = 4) -> np.ndarray:
@@ -321,6 +322,9 @@ class Engine(QObject):
         if f is not None and self.mode == "timeline":
             pr = self.get_project()
             f.texts = [(dict(x), pr.opacity_at(x, t)) for x in pr.texts_at(t)]
+            it = pr.item(f.item_id) if f.item_id else None
+            f.bars = (float(it.get("bars", 0.0) or 0.0) if it else 0.0,
+                      float(pr.data["settings"].get("bars", 0.0) or 0.0))
         return f
 
     def _render_base(self, t, still=False):

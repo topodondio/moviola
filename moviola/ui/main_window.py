@@ -18,6 +18,7 @@ from .bin_panel import BinPanel
 from .color_panel import ColorPanel
 from .export_dialog import ExportDialog
 from .inspector import Inspector
+from .project_settings import ProjectSettingsDialog, bars_for_ratio
 from .text_render import default_family, render_png, text_box
 from .source_bar import SourceBar
 from .timeline import TimelinePanel, tc
@@ -294,7 +295,7 @@ class MainWindow(QMainWindow):
         act(m, "Aggiungi traccia audio", lambda: self.timeline_action("add_audio_track", []))
         act(m, "Scollega audio e video", lambda: self.timeline_action("unlink", list(self.timeline.view.selection)))
         act(m, "Collega audio e video", lambda: self.timeline_action("link", list(self.timeline.view.selection)))
-        act(m, "Impostazioni timeline…", self.timeline_settings)
+        act(m, "Impostazioni progetto (fps, risoluzione, bande)…", self.timeline_settings, "Ctrl+,")
 
         m = mb.addMenu("Colore")
         act(m, "Copia regolazioni", self.copy_grade, "Ctrl+Shift+C")
@@ -359,6 +360,7 @@ class MainWindow(QMainWindow):
         ins.changed.connect(self._item_edit)
         ins.action.connect(self._inspector_action)
         self.timeline.btn_text.clicked.connect(self.add_text)
+        self.timeline.btn_settings.clicked.connect(self.timeline_settings)
         cp.edit.connect(self._grade_edit)
         cp.target_changed.connect(lambda k: self.refresh_color_panel())
         cp.action.connect(self._color_action)
@@ -385,6 +387,7 @@ class MainWindow(QMainWindow):
         self.engine.refresh()
 
     def _update_title(self):
+        self._update_settings_label()
         name = os.path.basename(self.project.path) if self.project.path else "Senza titolo"
         self.setWindowTitle(f"{'• ' if self.project.dirty else ''}{name} — Moviola")
 
@@ -864,26 +867,26 @@ class MainWindow(QMainWindow):
 
     def timeline_settings(self):
         st = self.project.data["settings"]
-        presets = ["1920×1080 · 25", "1920×1080 · 30", "1920×1080 · 50", "3840×2160 · 25", "1280×720 · 25",
-                   "1080×1920 · 30 (verticale)", "1080×1080 · 30 (quadrato)"]
-        cur = f"{st['width']}×{st['height']} · {st['fps']:g}"
-        if cur not in presets:
-            presets.insert(0, cur)
-        val, ok = QInputDialog.getItem(self, "Impostazioni timeline", "Risoluzione e fotogrammi al secondo:",
-                                       presets, presets.index(cur) if cur in presets else 0, True)
-        if not ok:
+        fps_src = sorted({f"{x['fps']:g} fps" for x in self.project.sources if x.get("has_video")})
+        d = ProjectSettingsDialog(st, ", ".join(fps_src) if fps_src else None, self)
+        if not d.exec():
             return
-        try:
-            size, fps = val.split("·")
-            w, h = size.strip().split("×")
-            fps = float(fps.split()[0].replace(",", "."))
-            self.project.checkpoint()
-            st.update(width=int(w), height=int(h), fps=fps, auto=False)
-        except Exception:
-            QMessageBox.warning(self, "Formato non valido", "Scrivi ad esempio: 1920×1080 · 25")
+        vals = d.values()
+        if all(st.get(k) == v for k, v in vals.items()):
             return
+        self.project.checkpoint()
+        st.update(vals)
+        for it in self.project.items:  # riallinea i pezzi alla nuova griglia di fotogrammi
+            it["start"] = self.project.snap(it["start"])
+        if self.engine.mode == "timeline":
+            self.engine.seek(self.engine.position)  # testina sulla nuova griglia di fotogrammi
         self._apply_aspect()
         self._after_timeline_edit()
+        self.statusBar().showMessage(f"Progetto: {vals['width']}×{vals['height']}, {vals['fps']:g} fps", 4000)
+
+    def _update_settings_label(self):
+        st = self.project.data["settings"]
+        self.timeline.btn_settings.setText(f"{float(st['fps']):g} fps · {st['width']}×{st['height']}")
 
     # ======================================================= proprietà pezzi
     def _sel_items(self, kind=None):
@@ -915,6 +918,8 @@ class MainWindow(QMainWindow):
             return
         if key == "speed":
             pr.set_speed([i["id"] for i in its], value)
+        elif key == "speed_curve":
+            pr.set_speed_curve([i["id"] for i in its], value)
         elif key == "duration":
             for it in its:
                 it["src_out"] = it["src_in"] + max(pr.frame(), pr.snap(float(value)))
@@ -928,7 +933,7 @@ class MainWindow(QMainWindow):
                 it[key] = value
         self._mark_dirty()
         self.timeline.view.update()
-        if key in ("speed", "duration"):
+        if key in ("speed", "speed_curve", "duration"):
             self.timeline.sync()
             self._update_name_label()
             self.refresh_inspector()
@@ -943,6 +948,12 @@ class MainWindow(QMainWindow):
             return
         self.project.checkpoint()
         W, H = pr.size
+        if act.startswith("bars:"):
+            lab = act[5:]
+            ratio = float(lab.split(":")[0]) if ":" in lab else 0.0
+            for it in its:
+                it["bars"] = bars_for_ratio(ratio, W, H)
+            return self._after_timeline_edit()
         for it in its:
             if act == "center":
                 it["pos_x"] = 0.0
