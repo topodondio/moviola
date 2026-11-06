@@ -91,6 +91,10 @@ def main():
     args = [a for a in sys.argv[1:] if a.endswith(".moviola") and os.path.exists(a)]
     if args:
         win.open_project(args[0])
+    else:
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(150, win.show_welcome)
     code = app.exec()
     _save_cfg(cfg_path, cfg)
     sys.exit(code)

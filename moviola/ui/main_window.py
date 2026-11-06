@@ -8,7 +8,7 @@ import time
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence, QPixmap
-from PySide6.QtWidgets import (QDockWidget, QTabWidget, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QDockWidget, QStyle, QTabWidget, QToolBar, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QMainWindow, QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget)
 
 from .. import audio, color, media, paths
@@ -18,6 +18,7 @@ from .bin_panel import BinPanel
 from .color_panel import ColorPanel
 from .export_dialog import ExportDialog
 from .inspector import Inspector
+from .welcome import WelcomeDialog
 from .project_settings import ProjectSettingsDialog, bars_for_ratio
 from .text_render import default_family, render_png, text_box
 from .source_bar import SourceBar
@@ -76,6 +77,7 @@ class MainWindow(QMainWindow):
         self.resize(1440, 900)
         self._build_ui()
         self._build_actions()
+        self._build_toolbar()
         self._connect()
         self.set_viewer_mode("timeline", force=True)
         self.refresh_all()
@@ -232,17 +234,18 @@ class MainWindow(QMainWindow):
             return a
 
         m = mb.addMenu("File")
-        act(m, "Nuovo progetto", self.new_project, "Ctrl+N")
-        act(m, "Apri progetto…", self.open_project, "Ctrl+O")
+        self.act_new = act(m, "Nuovo progetto", self.new_project, "Ctrl+N")
+        self.act_open = act(m, "Apri progetto…", self.open_project, "Ctrl+O")
+        act(m, "Progetti recenti…", self.show_welcome, "Ctrl+Shift+O")
         self.recent_menu = m.addMenu("Apri recente")
         self._fill_recent()
-        act(m, "Salva", self.save, "Ctrl+S")
+        self.act_save = act(m, "Salva", self.save, "Ctrl+S")
         act(m, "Salva con nome…", self.save_as, "Ctrl+Shift+S")
         m.addSeparator()
-        act(m, "Importa clip…", self.import_dialog, "Ctrl+I")
+        self.act_import = act(m, "Importa clip…", self.import_dialog, "Ctrl+I")
         act(m, "Importa cartella…", self.import_folder_dialog)
         m.addSeparator()
-        act(m, "Esporta video…", self.export_dialog, "Ctrl+E")
+        self.act_export = act(m, "Esporta video…", self.export_dialog, "Ctrl+E")
         m.addSeparator()
         act(m, "Esci", self.close, "Ctrl+Q")
 
@@ -336,6 +339,55 @@ class MainWindow(QMainWindow):
         act(m, "Cartella cache (proxy e audio)", lambda: QDesktopServices.openUrl(
             QUrl.fromLocalFile(paths.cache_root())))
 
+    def _build_toolbar(self):
+        """Barra in alto con i comandi del progetto sempre a portata di mano."""
+        tb = QToolBar("Progetto", self)
+        tb.setObjectName("toolbar_progetto")
+        tb.setMovable(False)
+        tb.setIconSize(QSize(16, 16))
+        tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        st = self.style()
+        for a, icon, tip in ((self.act_new, QStyle.SP_FileIcon, "Nuovo progetto (Ctrl/Cmd+N)"),
+                             (self.act_open, QStyle.SP_DialogOpenButton, "Apri progetto (Ctrl/Cmd+O)"),
+                             (self.act_save, QStyle.SP_DialogSaveButton, "Salva progetto (Ctrl/Cmd+S)")):
+            a.setIcon(st.standardIcon(icon))
+            a.setToolTip(tip)
+            tb.addAction(a)
+        self.act_recent_tb = tb.addAction("Recenti", self.show_welcome)
+        self.act_recent_tb.setToolTip("Progetti aperti di recente")
+        tb.addSeparator()
+        self.act_undo.setIcon(st.standardIcon(QStyle.SP_ArrowBack))
+        self.act_undo.setToolTip("Annulla (Ctrl/Cmd+Z)")
+        self.act_redo.setIcon(st.standardIcon(QStyle.SP_ArrowForward))
+        self.act_redo.setToolTip("Ripeti (Ctrl/Cmd+Maiusc+Z)")
+        tb.addAction(self.act_undo)
+        tb.addAction(self.act_redo)
+        tb.addSeparator()
+        self.act_import.setToolTip("Importa clip (Ctrl/Cmd+I)")
+        self.act_export.setToolTip("Esporta il video (Ctrl/Cmd+E)")
+        tb.addAction(self.act_import)
+        tb.addAction(self.act_export)
+        tb.setStyleSheet("QToolBar { background: #1a1b1d; border: none; spacing: 4px; padding: 3px; }"
+                         "QToolButton { padding: 4px 8px; }")
+        self.addToolBar(Qt.TopToolBarArea, tb)
+
+    def _update_undo_state(self):
+        self.act_undo.setEnabled(self.project.can_undo())
+        self.act_redo.setEnabled(self.project.can_redo())
+
+    def show_welcome(self):
+        """Schermata con i progetti recenti (all'avvio e da File → Progetti recenti)."""
+        d = WelcomeDialog(self.cfg.get("recent", []), self)
+        if not d.exec():
+            return
+        kind, path = d.choice
+        if kind == "open":
+            self.open_project(path)
+        elif kind == "browse":
+            self.open_project()
+        elif kind == "new" and (self.project.sources or self.project.items or self.project.path):
+            self.new_project()
+
     def _connect(self):
         e = self.engine
         e.frame_ready.connect(self._on_frame)
@@ -395,6 +447,7 @@ class MainWindow(QMainWindow):
 
     def _update_title(self):
         self._update_settings_label()
+        self._update_undo_state()
         name = os.path.basename(self.project.path) if self.project.path else "Senza titolo"
         self.setWindowTitle(f"{'• ' if self.project.dirty else ''}{name} — Moviola")
 
@@ -1475,8 +1528,13 @@ class MainWindow(QMainWindow):
     def _remember_recent(self, path):
         self.cfg["last_project_dir"] = os.path.dirname(path)
         rec = [p for p in self.cfg.get("recent", []) if p != path]
-        self.cfg["recent"] = [path] + rec[:7]
+        self.cfg["recent"] = [path] + rec[:11]
         self._fill_recent()
+        try:  # salvato subito, così l'elenco resta anche se il programma si chiude male
+            with open(paths.config_path(), "w", encoding="utf-8") as f:
+                json.dump(self.cfg, f, indent=1)
+        except Exception:
+            pass
 
     def _fill_recent(self):
         self.recent_menu.clear()

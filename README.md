@@ -29,6 +29,11 @@ Se il doppio clic su Mac non funziona, da Terminale: `bash avvia_mac.command`.
 
 ## Come si lavora
 
+All'avvio compare l'elenco dei **progetti recenti** (doppio clic per
+riaprirne uno), con i pulsanti *Nuovo progetto* e *Apri altro progetto*.
+In alto c'è sempre la barra con **Nuovo, Apri, Salva, Recenti, Annulla,
+Ripeti, Importa ed Esporta**.
+
 ```
 ┌──────────┬───────────────────────────────┬──────────┐
 │  CLIP    │  VISORE (sorgente / timeline) │  COLORE  │
