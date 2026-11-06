@@ -104,6 +104,9 @@ fotogrammi. Il visore sorgente mostra invece ogni clip ai suoi fps originali.
 - Trascina per spostare (anche su un'altra traccia), i bordi per rifilare.
   Quello che finisce sotto viene sovrascritto (come in Resolve).
 - **B** taglia alla testina · **Canc** elimina · **Maiusc+Canc** elimina e chiude lo spazio.
+- Finché video e audio sono collegati, allungarne o accorciarne uno cambia
+  anche l'altro della stessa quantità; per lavorarli separati: clic destro →
+  Scollega (o Alt mentre trascini).
 - **Alt**+trascina muove solo il video o solo l'audio; clic destro → scollega/collega.
 - Clic destro su un audio → Volume. Aggancio ai bordi: **N**.
 - Rotella: scorre · Ctrl/Cmd+rotella o **+/−**: zoom · **Maiusc+Z**: adatta.
