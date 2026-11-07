@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QComboBox, QDockWidget, QTabWidget, QToolBar, QFi
                                QMainWindow, QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget)
 
 from .. import audio, color, media, paths
+from .. import speed as spd
 from ..playback import Engine
 from ..project import Project
 from .bin_panel import BinPanel
@@ -42,6 +43,8 @@ B: taglia alla testina · Canc: elimina · Maiusc+Canc: elimina e chiudi lo spaz
 N: aggancio magnetico on/off (Maiusc mentre trascini lo sospende) · + / −: zoom · Maiusc+Z: adatta · Alt+trascina: muovi solo video o solo audio<br>
 M: segnaposto alla testina (anche mentre suona, per i battiti) · Maiusc+M: segnaposto sul pezzo<br>
 Ctrl/Cmd+T: dissolvenza incrociata con la clip precedente · Maiusc+F: fermo immagine alla testina<br>
+Ctrl/Cmd+Alt+trascina una clip, oppure , e . : scorre il contenuto lasciando posizione e durata<br>
+Quadratini in alto agli angoli delle clip: dissolvenze · linea azzurra su scritte e riquadri: opacità<br>
 Volume disegnato: clic sulla linea gialla di una clip audio, trascina il punto, doppio clic per toglierlo<br>
 T: aggiungi una scritta · R: aggiungi un riquadro colorato · trascina nel visore: sposta scritta, riquadro o inquadratura<br>
 Ctrl/Cmd+clic: selezione multipla · Ctrl/Cmd+A: seleziona tutto<br><br>
@@ -321,6 +324,10 @@ class MainWindow(QMainWindow):
         act(m, "Aggiungi scritta alla testina", self.add_text, "T")
         act(m, "Aggiungi riquadro colorato alla testina", self.add_box, "R")
         act(m, "Fermo immagine alla testina", lambda: self.freeze_at_playhead(), "Shift+F")
+        act(m, "Scorri contenuto: 1 fotogramma prima", lambda: self.timeline_action(
+            "slip:-1", list(self.timeline.view.selection)), ",")
+        act(m, "Scorri contenuto: 1 fotogramma dopo", lambda: self.timeline_action(
+            "slip:1", list(self.timeline.view.selection)), ".")
         act(m, "Dissolvenza incrociata sui pezzi selezionati", lambda: self.timeline_action(
             "transition:dissolve", list(self.timeline.view.selection)), "Ctrl+T")
         sm = m.addMenu("Segnaposti")
@@ -386,8 +393,6 @@ class MainWindow(QMainWindow):
         tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.act_recent_tb = QAction("Progetti recenti", self)
         self.act_recent_tb.triggered.connect(lambda _=False: self.show_welcome())
-        self.act_settings_tb = QAction("Impostazioni progetto", self)
-        self.act_settings_tb.triggered.connect(lambda _=False: self.timeline_settings())
         groups = [
             [(self.act_new, "new", "Nuovo progetto (Ctrl/Cmd+N)"),
              (self.act_open, "open", "Apri progetto (Ctrl/Cmd+O)"),
@@ -396,8 +401,7 @@ class MainWindow(QMainWindow):
             [(self.act_undo, "undo", "Annulla (Ctrl/Cmd+Z)"),
              (self.act_redo, "redo", "Ripeti (Ctrl/Cmd+Maiusc+Z)")],
             [(self.act_import, "import", "Importa clip (Ctrl/Cmd+I)"),
-             (self.act_export, "export", "Esporta il video (Ctrl/Cmd+E)"),
-             (self.act_settings_tb, "settings", "Impostazioni progetto: fps, risoluzione, bande nere (Ctrl/Cmd+,)")],
+             (self.act_export, "export", "Esporta il video (Ctrl/Cmd+E)")],
         ]
         for k, grp in enumerate(groups):
             if k:
@@ -453,10 +457,13 @@ class MainWindow(QMainWindow):
         v.action.connect(self.timeline_action)
         cp = self.color_panel
         cp.begin_edit.connect(self._grade_begin)
+        cp.anim_edit.connect(self._anim_edit)
+        cp.anim_seek.connect(self._anim_seek)
         ins = self.inspector
         ins.begin.connect(self._grade_begin)
         ins.changed.connect(self._item_edit)
         ins.action.connect(self._inspector_action)
+        ins.preview_at.connect(self._preview_item_fraction)
         self.timeline.btn_text.clicked.connect(self.add_text)
         self.timeline.btn_settings.clicked.connect(self.timeline_settings)
         self.preview_combo.currentIndexChanged.connect(
@@ -584,6 +591,9 @@ class MainWindow(QMainWindow):
         if self.engine.mode == "source":
             self.source_bar.set_position(t)
         else:
+            ctx = self._anim_context() if self.right_tabs.currentIndex() == TAB_COLOR else None
+            if ctx is not None:
+                self.color_panel.set_playhead(t - ctx[0])
             follow = self.engine.playing
             before = self.timeline.view.scroll_t
             self.timeline.view.set_playhead(t, follow=follow)
@@ -756,6 +766,21 @@ class MainWindow(QMainWindow):
             self.bin.select(ids)
             return self.insert_at_playhead()
         if not ids:
+            return
+        if action.startswith("tag:"):
+            col = action[4:]
+            pr.checkpoint()
+            for rid in ids:
+                obj = pr.subclip(rid) or pr.source(rid)
+                if obj is None:
+                    continue
+                if col:
+                    obj["tag"] = col
+                else:
+                    obj.pop("tag", None)
+            self.bin.rebuild(pr, ids)
+            self.timeline.view.update()
+            self._mark_dirty()
             return
         if action == "duplicate":
             subs = [i for i in ids if pr.subclip(i)]
@@ -963,6 +988,18 @@ class MainWindow(QMainWindow):
                                              "traccia (usa l'aggancio magnetico).", 6000)
         elif action == "freeze":
             return self.freeze_at_playhead(ids)
+        elif action.startswith("slip:"):
+            its = [pr.item(i) for i in ids if pr.item(i)]
+            its = [i for i in its if not spd.is_static(i)]
+            if not its:
+                self.statusBar().showMessage("Seleziona in timeline la clip di cui scorrere il contenuto.", 4000)
+                return
+            pr.checkpoint()
+            frames = int(action.split(":", 1)[1])
+            for it in its:
+                src = pr.source(it["source"]) or {}
+                pr.slip([it["id"]], frames / max(src.get("fps") or pr.fps, 1.0))
+            self.slip_preview(its[0]["id"])
         elif action == "item_marker":
             its = [pr.item(i) for i in ids if pr.item(i)]
             its = [i for i in its if i["start"] - 1e-6 <= tpos <= pr.item_end(i) + 1e-6]
@@ -1167,6 +1204,26 @@ class MainWindow(QMainWindow):
                 it["pos_x"] = it["pos_y"] = 0.0
         self._after_timeline_edit()
 
+    def _preview_item_fraction(self, u):
+        """Mostra nel visore il fotogramma del pezzo selezionato a quella frazione
+        della sua durata (nodi della curva di velocità)."""
+        it, _ = self._primary_item()
+        if it is None or spd.is_static(it):
+            return
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")
+        t = it["start"] + max(0.0, min(1.0, u)) * self.project.item_dur(it)
+        self.engine.seek(min(t, self.project.item_end(it) - self.project.frame()))
+
+    def slip_preview(self, iid):
+        """Durante lo scorrimento mostra il primo fotogramma del pezzo."""
+        it = self.project.item(iid)
+        if it is None:
+            return
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")
+        self.engine.seek(it["start"])
+
     def marker_or_part(self):
         """Tasto M: sul visore sorgente crea la parte, in timeline mette un segnaposto
         (anche durante la riproduzione, per segnare i battiti della musica)."""
@@ -1315,10 +1372,62 @@ class MainWindow(QMainWindow):
         return [s["grade"] for s in srcs], (f"Clip intera: {', '.join(s['id'] for s in srcs)} "
                                             f"(vale per tutte le sue parti, ovunque)")
 
+    def _anim_context(self):
+        """(inizio, durata) del tempo su cui si anima il colore: il pezzo
+        selezionato o tutta la timeline; None per la clip intera."""
+        t = self.color_panel.target()
+        if t == "item":
+            its = self._video_items(list(self.timeline.view.selection))
+            if its:
+                return its[0]["start"], self.project.item_dur(its[0])
+            return None
+        if t == "global":
+            return 0.0, max(self.project.timeline_end(), 1.0)
+        return None
+
+    def _timeline_pos(self):
+        return self.engine.position if self.engine.mode == "timeline" else \
+            self.engine.source_positions.get("__timeline__", 0.0)
+
     def refresh_color_panel(self):
         grades, info = self.color_targets()
         self.color_panel.set_editable(bool(grades))
-        self.color_panel.show_grade(grades[0] if grades else None, info)
+        ctx = self._anim_context()
+        anim_ctx = (ctx[1], self._timeline_pos() - ctx[0]) if ctx else None
+        self.color_panel.show_grade(grades[0] if grades else None, info, anim_ctx)
+
+    def _anim_edit(self, key, pts):
+        grades, _ = self.color_targets()
+        ctx = self._anim_context()
+        if not grades or ctx is None:
+            return
+        rel = self._timeline_pos() - ctx[0]
+        for g in grades:
+            anim = g.setdefault("anim", {})
+            if pts:
+                anim[key] = copy.deepcopy(pts)
+            else:
+                old = anim.pop(key, None)
+                if old:  # torna fisso al valore che aveva alla testina
+                    v = color.value_at(old, rel)
+                    if key.startswith("hsl:"):
+                        _, k, i = key.split(":")
+                        g["hsl"][k][int(i)] = v
+                    else:
+                        g[key] = v
+            if not anim:
+                g.pop("anim", None)
+        self._mark_dirty()
+        self.engine.refresh()
+        self.timeline.view.update()
+
+    def _anim_seek(self, t_rel):
+        ctx = self._anim_context()
+        if ctx is None:
+            return
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")
+        self.engine.seek(ctx[0] + max(0.0, min(t_rel, ctx[1] - self.project.frame())))
 
     def _grade_begin(self, key):
         now = time.monotonic()

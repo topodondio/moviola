@@ -40,13 +40,14 @@ MARKER_COLORS = ["#e8a33d", "#e05050", "#4cbf4a", "#3d8fe0", "#c060d0", "#e0e0e0
 VIDEO_DEFAULTS = {"speed": 1.0, "bars": 0.0, "zoom": 1.0, "pos_x": 0.0, "pos_y": 0.0, "fade_in": 0.0, "fade_out": 0.0,
                   "fade_in_color": "black", "fade_out_color": "black"}
 AUDIO_DEFAULTS = {"speed": 1.0, "gain_db": 0.0, "fade_in": 0.0, "fade_out": 0.0}
-TEXT_DEFAULTS = {"text": "Titolo", "font": "", "size": 8.0, "color": "#ffffff", "bold": True, "italic": False,
+TEXT_DEFAULTS = {"opacity": 1.0, "text": "Titolo", "font": "", "size": 8.0, "color": "#ffffff", "bold": True,
+                 "italic": False,
                  "align": "center", "pos_x": 0.5, "pos_y": 0.5, "shadow": True, "box": False,
                  "box_color": "#000000", "box_opacity": 0.5, "fade_in": 0.5, "fade_out": 0.5, "speed": 1.0}
 
 
-SHAPE_DEFAULTS = {"color": "#000000", "opacity": 0.6, "width": 0.6, "height": 0.16, "pos_x": 0.5, "pos_y": 0.84,
-                  "radius": 0.0, "fade_in": 0.3, "fade_out": 0.3, "speed": 1.0}
+SHAPE_DEFAULTS = {"color": "#ffffff", "opacity": 1.0, "width": 1.0, "height": 1.0, "pos_x": 0.5, "pos_y": 0.5,
+                  "radius": 0.0, "fade_in": 0.0, "fade_out": 0.0, "speed": 1.0}
 
 OVERLAYS = ("text", "shape")
 
@@ -644,6 +645,38 @@ class Project:
                 for g in self.linked(it):
                     g["link"] = None
 
+    def slip(self, ids, d_src):
+        """Scorre il contenuto dei pezzi dentro la clip originale di d_src secondi
+        (tempo del file) lasciando invariati posizione e durata in timeline.
+        Video e audio collegati scorrono insieme. Restituisce lo spostamento
+        applicato (limitato dall'inizio e dalla fine del file)."""
+        groups, seen = [], set()
+        for iid in ids:
+            it = self.item(iid)
+            if it is None or is_overlay(it) or it["id"] in seen:
+                continue
+            g = [i for i in self.linked(it) if not is_overlay(i)]
+            seen.update(i["id"] for i in g)
+            groups.append(g)
+        applied = 0.0
+        for g in groups:
+            d = float(d_src)
+            for i in g:
+                src = self.source(i["source"])
+                dur = float((src or {}).get("duration") or 0.0)
+                if i.get("freeze") is not None:
+                    d = max(-i["freeze"], min(d, dur - 1.0 / max((src or {}).get("fps") or 25, 1) - i["freeze"]))
+                else:
+                    d = max(-i["src_in"], min(d, dur - i["src_out"]))
+            for i in g:
+                if i.get("freeze") is not None:
+                    i["freeze"] = i["freeze"] + d
+                else:
+                    i["src_in"] += d
+                    i["src_out"] += d
+            applied = d
+        return applied
+
     def set_speed(self, ids, speed):
         """Velocità costante (toglie l'eventuale curva)."""
         speed = max(0.1, min(8.0, float(speed)))
@@ -933,6 +966,29 @@ class Project:
         src = self.source(it["source"])
         return [src.get("grade") if src else None, it.get("grade"), self.data.get("global_grade")]
 
+    def grades_at(self, it, t):
+        """Regolazioni fisse al tempo t della timeline (risolve quelle animate:
+        il pezzo rispetto al suo inizio, la timeline rispetto allo zero)."""
+        src = self.source(it["source"]) if it.get("source") else None
+        g_src = color.resolve(src.get("grade"), 0.0) if src else None
+        return [g_src, color.resolve(it.get("grade"), t - it["start"]),
+                color.resolve(self.data.get("global_grade"), t)]
+
+    def anim_cuts(self, it):
+        """Tempi (timeline) in cui cambia l'andamento del colore animato del pezzo."""
+        s, e = it["start"], self.item_end(it)
+        out = {s + x for x in color.anim_times(it.get("grade"))}
+        out.update(color.anim_times(self.data.get("global_grade")))
+        return sorted(x for x in out if s + 1e-6 < x < e - 1e-6)
+
+    def anim_interval(self, it, t):
+        """Intervallo [a, b] (timeline) tra due punti di animazione che contiene t."""
+        pts = [it["start"]] + self.anim_cuts(it) + [self.item_end(it)]
+        for a, b in zip(pts[:-1], pts[1:]):
+            if t < b:
+                return a, b
+        return pts[-2], pts[-1]
+
     def grades_for_source(self, sid):
         src = self.source(sid)
         return [src.get("grade") if src else None]
@@ -953,6 +1009,15 @@ class Project:
             for t in (tr["t0"], tr["t1"]):
                 if start < t < end:
                     cuts.add(t)
+        # colore animato: un tratto per ogni intervallo tra due punti (fuori dalle transizioni)
+        kf_cuts = set()
+        for it in self.items:
+            if it["kind"] != "video":
+                continue
+            for t in self.anim_cuts(it):
+                if start < t < end and not any(tr["t0"] <= t <= tr["t1"] for tr in trs):
+                    kf_cuts.add(t)
+        cuts |= kf_cuts
         cuts = sorted(cuts)
         segs = []
         for a, b in zip(cuts[:-1], cuts[1:]):
@@ -964,7 +1029,7 @@ class Project:
             if it is not None:
                 tr = next((x for x in trs if x["t0"] - 1e-9 <= mid < x["t1"] and (x["a"] is it or x["b"] is it)),
                           None)
-            if segs and abs(segs[-1]["end"] - a) < 1e-6:
+            if segs and abs(segs[-1]["end"] - a) < 1e-6 and a not in kf_cuts:
                 last = segs[-1]
                 same = (tr is not None and last.get("trans") is tr) or \
                        (tr is None and last.get("trans") is None and last["item"] is it)

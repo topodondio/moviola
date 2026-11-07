@@ -84,7 +84,7 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
     def black(label, dur):
         chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={dur:.6f},format=rgb24,setsar=1[{label}]")
 
-    def clip(label, it, seg_start, dur, fades=True, extra_fade=None):
+    def clip(label, it, seg_start, dur, fades=True, extra_fade=None, anim_static=None):
         """Catena di un pezzo tra seg_start e seg_start+dur (tempi timeline):
         velocità, inquadratura, colore, dissolvenze, bande. Anche fuori dal
         pezzo (margini delle transizioni): oltre i limiti del file si tiene
@@ -123,8 +123,15 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
         w1, h1 = _fit_size(src, W, H, zoom)
         x = (W - w1) / 2 + float(it.get("pos_x", 0.0) or 0.0) * W
         y = (H - h1) / 2 + float(it.get("pos_y", 0.0) or 0.0) * H
-        grades = project.grades_for_item(it)
-        key = color.grade_key(grades)
+        # colore: fisso, oppure (se animato) miscela nel tempo tra il colore
+        # all'inizio e alla fine del tratto, come nell'anteprima
+        if anim_static is not None:
+            ga = gb = project.grades_at(it, anim_static)
+        else:
+            ga = project.grades_at(it, seg_start)
+            gb = project.grades_at(it, seg_start + dur)
+        key = color.grade_key(ga)
+        key_b = color.grade_key(gb)
         if freeze:
             c = f"[{idx}:v]trim=end_frame=1,setpts=PTS-STARTPTS,fps={fps:g}"
         else:
@@ -132,14 +139,30 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
             if pre_pad > 0:
                 c += f",tpad=start_mode=clone:start_duration={pre_pad:.6f}"
         c += f",scale={w1}:{h1}:flags=bicubic,setsar=1,format=rgb24"
-        if key != "identity":
-            if key not in lut_cache:
+
+        def lut_filter(k, grades):
+            if k == "identity":
+                return "null"
+            if k not in lut_cache:
                 name = f"lut_{len(lut_cache)}.cube"
                 color.write_cube(os.path.join(workdir, name), color.build_lut(grades, 33))
-                lut_cache[key] = name
-            c += f",lut3d=file={lut_cache[key]}:interp=tetrahedral"
-        c += f",tpad=stop_mode=clone:stop_duration={lead + dur + 2:.3f}[c{label}]"
-        chains.append(c)
+                lut_cache[k] = name
+            return f"lut3d=file={lut_cache[k]}:interp=tetrahedral"
+
+        tail = f"tpad=stop_mode=clone:stop_duration={lead + dur + 2:.3f}[c{label}]"
+        if key == key_b:
+            if key != "identity":
+                c += "," + lut_filter(key, ga)
+            chains.append(c + "," + tail)
+        else:
+            # T del filtro blend = secondi dall'inizio di questa catena (= timeline it.start + cs)
+            off = seg_start - (it["start"] + cs)
+            chains.append(c + f"[pre{label}]")
+            chains.append(f"[pre{label}]split=2[pa{label}][pb{label}]")
+            chains.append(f"[pa{label}]{lut_filter(key, ga)}[la{label}]")
+            chains.append(f"[pb{label}]{lut_filter(key_b, gb)}[lb{label}]")
+            chains.append(f"[la{label}][lb{label}]blend=all_expr='A+(B-A)*clip((T-{off:.6f})/{max(dur, 1e-6):.6f}\\,0\\,1)',"
+                          f"format=rgb24,{tail}")
         chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={lead + dur + 0.2:.6f},format=rgb24[b{label}]")
         f = f"[b{label}][c{label}]overlay=x={x:.2f}:y={y:.2f}:eof_action=repeat:format=rgb"
         if fi > 0 and lead < fi:
@@ -163,12 +186,15 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
             if kind in ("dip_black", "dip_white"):
                 col = "black" if kind == "dip_black" else "white"
                 half = tr["cut"] - seg["start"]
-                clip(f"s{k}a", tr["a"], seg["start"], half, fades=False, extra_fade=("out", col))
-                clip(f"s{k}b", tr["b"], tr["cut"], seg["end"] - tr["cut"], fades=False, extra_fade=("in", col))
+                mid = (tr["t0"] + tr["t1"]) / 2
+                clip(f"s{k}a", tr["a"], seg["start"], half, fades=False, extra_fade=("out", col), anim_static=mid)
+                clip(f"s{k}b", tr["b"], tr["cut"], seg["end"] - tr["cut"], fades=False, extra_fade=("in", col),
+                     anim_static=mid)
                 chains.append(f"[s{k}a][s{k}b]concat=n=2:v=1:a=0,format=rgb24,setsar=1[s{k}]")
             else:
-                clip(f"s{k}a", tr["a"], seg["start"], dur, fades=False)
-                clip(f"s{k}b", tr["b"], seg["start"], dur, fades=False)
+                mid = (tr["t0"] + tr["t1"]) / 2
+                clip(f"s{k}a", tr["a"], seg["start"], dur, fades=False, anim_static=mid)
+                clip(f"s{k}b", tr["b"], seg["start"], dur, fades=False, anim_static=mid)
                 xf = {"dissolve": "fade", "wipe_l": "wipeleft", "wipe_r": "wiperight",
                       "push_l": "slideleft", "push_r": "slideright"}.get(kind, "fade")
                 chains.append(f"[s{k}a][s{k}b]xfade=transition={xf}:duration={dur:.6f}:offset=0,"

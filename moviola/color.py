@@ -65,13 +65,75 @@ def normalize(grade: dict | None) -> dict:
         vals = (grade.get("hsl") or {}).get(k)
         if vals and len(vals) == 8:
             out["hsl"][k] = [float(v) for v in vals]
+    anim = {}
+    for k, pts in (grade.get("anim") or {}).items():
+        if k in ANIM_KEYS and pts:
+            anim[k] = sorted(([float(t), float(v)] for t, v in pts), key=lambda q: q[0])
+    if anim:
+        out["anim"] = anim
     return out
+
+
+# ------------------------------------------------------------------------
+# Regolazioni animate nel tempo (pezzi e timeline)
+# ------------------------------------------------------------------------
+# ogni cursore (e ogni cursore HSL "hsl:sat:3") può avere una lista di punti
+# [tempo, valore]: tempo in secondi dall'inizio del pezzo (o della timeline).
+# Tra un punto e l'altro il valore cambia in modo lineare; prima del primo e
+# dopo l'ultimo resta fermo.
+
+ANIM_KEYS = set(SLIDERS) | {f"hsl:{k}:{i}" for k in ("hue", "sat", "lum") for i in range(8)}
+
+
+def slider_range(key):
+    if key.startswith("hsl:"):
+        return -100.0, 100.0
+    lab, lo, hi, step, sec = SLIDERS[key]
+    return float(lo), float(hi)
+
+
+def value_at(points, t):
+    if not points:
+        return 0.0
+    if len(points) == 1:
+        return float(points[0][1])
+    return float(np.interp(t, [p[0] for p in points], [p[1] for p in points]))
+
+
+def is_animated(grade) -> bool:
+    return bool(grade and grade.get("anim"))
+
+
+def anim_times(grade):
+    """Tempi (relativi) dei punti di tutte le animazioni della regolazione."""
+    out = set()
+    for pts in ((grade or {}).get("anim") or {}).values():
+        out.update(float(p[0]) for p in pts)
+    return sorted(out)
+
+
+def resolve(grade, t):
+    """Regolazione fissa con i valori animati calcolati al tempo t (relativo)."""
+    g = normalize(grade)
+    anim = g.pop("anim", None)
+    if not anim:
+        return g
+    for k, pts in anim.items():
+        v = value_at(pts, t)
+        if k.startswith("hsl:"):
+            _, part, i = k.split(":")
+            g["hsl"][part][int(i)] = v
+        else:
+            g[k] = v
+    return g
 
 
 def is_identity(grade: dict | None) -> bool:
     if not grade:
         return True
     g = normalize(grade)
+    if g.get("anim"):
+        return False
     if any(abs(g[k]) > 1e-6 for k in SLIDERS):
         return False
     for c in CURVE_CHANNELS:

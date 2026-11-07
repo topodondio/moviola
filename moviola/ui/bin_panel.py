@@ -28,27 +28,49 @@ def fmt_dur(sec: float) -> str:
     return f"{m}:{s:04.1f}"
 
 
+TAGS = [("Verde (mi piace)", "#3e9a4a"), ("Giallo", "#b9a028"), ("Arancione", "#c27a2a"),
+        ("Rosso (da scartare)", "#b04040"), ("Blu", "#3a6db8"), ("Viola", "#7d4fb0"), ("Grigio", "#6a6a6a")]
+
+
+def _tag_row(item, tag):
+    """Colora la riga con l'etichetta scelta (sfondo tenue + bordino pieno)."""
+    if not tag:
+        return
+    c = QColor(tag)
+    soft = QColor(c.red(), c.green(), c.blue(), 85)
+    for col in range(item.columnCount() or 3):
+        item.setBackground(col, soft)
+    pm = QPixmap(6, 26)
+    pm.fill(c)
+    if item.icon(0).isNull():
+        item.setIcon(0, QIcon(pm))
+
+
 class BinTree(QTreeWidget):
     files_dropped = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setColumnCount(4)
-        self.setHeaderLabels(["Nome", "Durata", "Ingresso → Uscita", "Stato"])
+        self.setColumnCount(3)
+        self.setHeaderLabels(["Nome", "Durata", "Ingresso → Uscita"])
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(False)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setAlternatingRowColors(True)
-        self.setIconSize(QSize(48, 27))
+        self.setIconSize(QSize(44, 25))
+        self.setTextElideMode(Qt.ElideRight)
+        self.setIndentation(14)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setUniformRowHeights(False)
         self.setRootIsDecorated(True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         h = self.header()
         h.setStretchLastSection(False)
+        h.setMinimumSectionSize(40)
         h.setSectionResizeMode(0, QHeaderView.Stretch)
-        for i in (1, 2, 3):
+        for i in (1, 2):
             h.setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
     def selected_ids(self):
@@ -116,6 +138,7 @@ class BinPanel(QWidget):
         self.trees = (self.tree, self.audio_tree)
         self._items: dict[str, QTreeWidgetItem] = {}
         self._status: dict[str, str] = {}
+        self._src_names: dict[str, tuple] = {}
         self._icons: dict[str, QIcon] = {}
         self._block = False
         self._active = self.tree
@@ -160,26 +183,29 @@ class BinPanel(QWidget):
             tree = self._tree_for(src)
             missing = not os.path.exists(src["path"])
             mark = "" if src.get("has_video") else "♪ "
-            name = mark + src["id"] + "   " + (src.get("label") or src["name"])
-            top = QTreeWidgetItem([name, fmt_dur(src["duration"]), "", self._status.get(src["id"], "")])
+            top = QTreeWidgetItem(["", fmt_dur(src["duration"]), ""])
             top.setData(0, Qt.UserRole, src["id"])
+            self._src_names[src["id"]] = (mark + src["id"], src.get("label") or src["name"])
             tip = src["path"] + (f"\n{src['width']}×{src['height']} · {src['fps']:.2f} fps" if src["has_video"] else "")
             top.setToolTip(0, tip)
+            self._items[src["id"]] = top
+            self._set_top_text(src["id"], "file mancante" if missing else None)
             if missing:
                 top.setForeground(0, QColor(230, 90, 80))
-                top.setText(3, "file mancante")
+            _tag_row(top, src.get("tag"))
             if src["id"] in self._icons:
                 top.setIcon(0, self._icons[src["id"]])
             f = top.font(0)
             f.setBold(True)
             top.setFont(0, f)
             tree.addTopLevelItem(top)
-            self._items[src["id"]] = top
             for sub in project.subclips_of(src["id"]):
                 lab = sub["id"] + (f"   {sub['label']}" if sub.get("label") else "")
                 ch = QTreeWidgetItem([lab, fmt_dur(sub["out"] - sub["in"]),
-                                      f"{fmt_dur(sub['in'])} → {fmt_dur(sub['out'])}", ""])
+                                      f"{fmt_dur(sub['in'])} → {fmt_dur(sub['out'])}"])
                 ch.setData(0, Qt.UserRole, sub["id"])
+                ch.setToolTip(0, lab)
+                _tag_row(ch, sub.get("tag"))
                 top.addChild(ch)
                 self._items[sub["id"]] = ch
             top.setExpanded(first or src["id"] in expanded or any(s in selected for s in
@@ -201,11 +227,20 @@ class BinPanel(QWidget):
             it.setText(1, fmt_dur(sub["out"] - sub["in"]))
             it.setText(2, f"{fmt_dur(sub['in'])} → {fmt_dur(sub['out'])}")
 
+    def _set_top_text(self, sid, status=None):
+        """Riga della clip: codice in grassetto sulla prima riga, nome del file
+        (e lo stato dei lavori in corso) sulla seconda."""
+        it = self._items.get(sid)
+        names = self._src_names.get(sid)
+        if it is None or names is None:
+            return
+        st = status if status is not None else self._status.get(sid, "")
+        second = names[1] + (f"  ·  {st}" if st else "")
+        it.setText(0, f"{names[0]}\n{second}")
+
     def set_status(self, sid, text):
         self._status[sid] = text
-        it = self._items.get(sid)
-        if it:
-            it.setText(3, text)
+        self._set_top_text(sid)
 
     def set_thumb(self, sid, path):
         pm = QPixmap(path)
@@ -270,6 +305,13 @@ class BinPanel(QWidget):
             m.addAction("Duplica\tCtrl+D", lambda: self.request.emit("duplicate", ids))
             m.addAction("Rinomina…\tF2", lambda: self.request.emit("rename", ids[:1]))
             m.addAction("Elimina", lambda: self.request.emit("delete", ids))
+            tm = m.addMenu("Colore etichetta")
+            for lab, col in TAGS:
+                pm = QPixmap(14, 14)
+                pm.fill(QColor(col))
+                tm.addAction(QIcon(pm), lab, lambda cc=col: self.request.emit("tag:" + cc, ids))
+            tm.addSeparator()
+            tm.addAction("Nessuno", lambda: self.request.emit("tag:", ids))
             m.addSeparator()
             if not audio:
                 m.addAction("Copia regolazioni colore", lambda: self.request.emit("copy_grade", ids[:1]))

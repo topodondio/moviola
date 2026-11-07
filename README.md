@@ -5,7 +5,7 @@ Pensato per chi viene dalla fotografia: si lavora "a clip" e il colore si
 corregge con comandi fotografici (esposizione, contrasto, bilanciamento del
 bianco, curva, HSL per colore), senza nodi.
 
-> Stato: **prototipo 0.5**. Le funzioni base ci sono tutte; da collaudare
+> Stato: **prototipo 0.6**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
 ## Avvio
@@ -33,7 +33,7 @@ All'avvio compare l'elenco dei **progetti recenti** (doppio clic per
 riaprirne uno), con i pulsanti *Nuovo progetto* e *Apri altro progetto*.
 In alto c'è sempre una barra di sole icone (il nome compare passandoci
 sopra col mouse): nuovo, apri, salva, recenti · annulla, ripeti · importa,
-esporta, impostazioni del progetto.
+esporta. Le impostazioni del progetto stanno nel pulsante sopra la timeline.
 
 ```
 ┌─────────────────────────┬──────────────────────────────────────┐
@@ -62,6 +62,9 @@ La colonna a sinistra ha tre schede, scelte con le linguette in alto:
    segna **I** (ingresso) e **O** (uscita), premi **Invio** (o M).
    Nasce `clip1.1`, poi `clip1.2`, … I numeri non cambiano mai, anche se
    elimini una parte.
+   Con il clic destro puoi dare a clip e parti un **colore di etichetta**
+   (verde «mi piace», rosso «da scartare», …): la riga si colora e in
+   timeline i pezzi che ne derivano hanno una striscia dello stesso colore.
 3. **Correggi le parti quando vuoi**: nella barra sotto il visore ogni parte
    è una fascia colorata; trascinane i bordi per allungarla o accorciarla,
    il centro per spostarla. Oppure selezionala e premi I/O.
@@ -78,6 +81,13 @@ La colonna a sinistra ha tre schede, scelte con le linguette in alto:
    Si applicano in quest'ordine (clip → pezzo → timeline). Copia/incolla con
    Ctrl/Cmd+Maiusc+C / V su più elementi selezionati (Ctrl/Cmd+clic).
    I preset si salvano dal menu Colore. Tasto `\` = prima/dopo.
+   **Colore animato nel tempo** (solo per *Pezzo* e *Timeline*): la casella
+   davanti a ogni cursore, anche quelli HSL, lo trasforma in un grafico nel
+   tempo (orizzontale il pezzo o la timeline, verticale il valore). Clic
+   aggiunge un punto, trascinandolo il visore mostra quel momento, doppio
+   clic lo toglie; tra un punto e l'altro il valore cambia gradualmente.
+   Togliendo la spunta il cursore torna fisso al valore che aveva alla
+   testina.
 6. **Scheda EFFETTI** (si apre anche con un doppio clic su un pezzo o dal
    clic destro → «Velocità ed effetti…»): seleziona un pezzo in timeline e
    regola
@@ -99,6 +109,8 @@ La colonna a sinistra ha tre schede, scelte con le linguette in alto:
    - **fermo immagine**: durata e «Ferma alla testina» (**Maiusc+F**): il
      fotogramma si blocca, quello che viene dopo slitta in avanti, la musica
      che sta già suonando continua;
+   - **curva di velocità**: trascinando un nodo, il visore mostra il
+     fotogramma che si trova in quel punto;
    - **inquadratura**: zoom, spostamento orizzontale/verticale, *Adatta*,
      *Riempi* (niente bande), *Centra*; oppure trascina l'immagine nel visore;
    - **dissolvenze** in entrata e uscita, da/verso **nero** o **bianco**,
@@ -113,7 +125,8 @@ La colonna a sinistra ha tre schede, scelte con le linguette in alto:
    righe, carattere, dimensione, colore, grassetto/corsivo, allineamento,
    ombra, riquadro con opacità, durata, comparsa e scomparsa in dissolvenza.
    Si sposta trascinandola nel visore. Le scritte stanno sempre sopra al video.
-   **Riquadri colorati**: tasto **R** (o «Riquadro» sulla timeline):
+   **Riquadri colorati**: tasto **R** (o «Riquadro» sulla timeline); nascono
+   bianchi, opachi e a schermo pieno:
    colore, opacità, angoli arrotondati, larghezza, altezza, posizione
    (anche trascinandolo nel visore), durata e dissolvenze; formati pronti
    *Schermo pieno*, *Fascia in basso*, *Sotto un titolo*. Una scritta su una
@@ -159,6 +172,13 @@ fotogrammi. Il visore sorgente mostra invece ogni clip ai suoi fps originali.
   anche l'altro della stessa quantità; per lavorarli separati: clic destro →
   Scollega (o Alt mentre trascini).
 - **Alt**+trascina muove solo il video o solo l'audio; clic destro → scollega/collega.
+- **Scorri il contenuto** (slittamento): **Ctrl/Cmd+Alt+trascina** una clip,
+  oppure **,** e **.** di un fotogramma: cambia la parte di clip originale
+  mostrata, lasciando invariate posizione e durata in timeline (il visore
+  mostra il nuovo primo fotogramma).
+- **Maniglie sulle clip**: i quadratini bianchi agli angoli in alto si
+  trascinano per le dissolvenze in entrata e in uscita; su scritte e
+  riquadri la linea azzurra si trascina su e giù per l'opacità.
 - Clic destro su un audio → Volume.
 - **Aggancio magnetico** (pulsante con la calamita, tasto **N**): spostando,
   rifilando o trascinando clip dalla lista, i bordi si attaccano a quelli

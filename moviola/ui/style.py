@@ -35,7 +35,9 @@ QScrollBar::handle {{ background: #44474c; border-radius: 4px; min-width: 24px; 
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QProgressBar {{ border: 1px solid #3a3c40; border-radius: 3px; text-align: center; }}
 QProgressBar::chunk {{ background: {ACCENT}; }}
-QRadioButton::indicator, QCheckBox::indicator {{ width: 13px; height: 13px; }}
+QDoubleSpinBox, QSpinBox {{ color: #ececec; min-height: 20px; }}
+QDoubleSpinBox[noButtons="true"]::up-button, QDoubleSpinBox[noButtons="true"]::down-button
+  {{ width: 0px; border: none; }}
 QLabel#modeLabel {{ color: {ACCENT}; font-weight: 700; letter-spacing: 1px; }}
 QLabel#timecode {{ font-family: Menlo, Consolas, monospace; font-size: 15px; color: #f0f0f0; }}
 QStatusBar {{ background: #1a1b1d; color: #999; }}

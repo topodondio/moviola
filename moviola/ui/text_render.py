@@ -83,6 +83,7 @@ def text_box(item, frame: QRectF) -> QRectF:
 
 
 def draw_text(p: QPainter, frame: QRectF, item, opacity: float = 1.0):
+    opacity *= max(0.0, min(1.0, float(item.get("opacity", 1.0))))
     if opacity <= 0.001 or not (item.get("text") or "").strip():
         return
     px, font, fm, lines, widths, lh, box = _layout(item, frame)

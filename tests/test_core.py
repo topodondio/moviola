@@ -287,6 +287,36 @@ def test_transitions(tmp):
     print("transizioni, fermo immagine, volume e segnaposti ok")
 
 
+def test_color_anim(tmp):
+    """Colore animato nel tempo: la saturazione del pezzo va da 0 a -100 in 2 s."""
+    a = os.path.join(tmp, "rosso_anim.mp4")
+    _solid(a, "red", 4, "anullsrc=r=48000:cl=stereo:d=4")
+    pr = P.Project(); store = audio.AudioStore()
+    s_ = pr.add_source(a, info(4)); store.register(s_["id"], media.make_audio_cache(a))
+    v = [i for i in pr.append_to_timeline(["clip1"]) if i["kind"] == "video"][0]
+    v["grade"]["anim"] = {"saturation": [[1.0, 0.0], [3.0, -100.0]]}
+    assert pr.anim_cuts(v) == [1.0, 3.0]
+    g = pr.grades_at(v, 2.0)[1]; assert abs(g["saturation"] + 50) < 1e-6 and "anim" not in g
+    segs = pr.video_segments(); assert len(segs) == 3, segs
+    pr.data["global_grade"]["anim"] = {"exposure": [[0.0, 0.0], [4.0, 0.0]]}  # piatta: nessun effetto
+    out = os.path.join(tmp, "anim.mp4")
+    cmd, wd, dur = export.build_job(pr, store, out)
+    err = export.run_job(cmd, wd, dur); assert err is None, err[-800:]
+
+    def px(ts):
+        fr = subprocess.run([paths.ffmpeg_exe(), "-v", "error", "-ss", f"{ts}", "-i", out, "-frames:v", "1",
+                             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        return np.frombuffer(fr, np.uint8).reshape(360, 640, 3).astype(int)[180, 320]
+
+    def sat(c):
+        return c.max() - c.min()
+
+    s0, s1, s2, s3 = sat(px(0.5)), sat(px(2.0)), sat(px(2.9)), sat(px(3.5))
+    assert s0 > 200 and s3 < 15 and s0 > s1 > s2 > s3, (s0, s1, s2, s3)
+    assert 60 < s1 < 190, s1  # a metà: circa metà saturazione
+    print("colore animato ok")
+
+
 def main():
     test_model(); test_color()
     with tempfile.TemporaryDirectory() as t:
@@ -295,6 +325,7 @@ def main():
         test_curve_bars(t)
         test_box_music(t)
         test_transitions(t)
+        test_color_anim(t)
     print("TUTTI I TEST OK")
 
 

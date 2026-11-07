@@ -107,6 +107,7 @@ class Inspector(QWidget):
     begin = Signal(str)
     changed = Signal(str, str, object)  # tipo pezzo ('video', 'audio', 'text'), chiave, valore
     action = Signal(str)  # 'fill', 'center', 'add_text'
+    preview_at = Signal(float)  # frazione del pezzo da mostrare nel visore (nodi della curva)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -207,6 +208,7 @@ class Inspector(QWidget):
         cw = SpeedCurveWidget()
         cw.pressed.connect(lambda: self._begin("speed_curve"))
         cw.changed.connect(lambda pts: self._emit(kind, "speed_curve", pts))
+        cw.node_at.connect(self.preview_at)
         vl.addWidget(cw)
         prow = QHBoxLayout()
         preset = QComboBox()
@@ -428,6 +430,7 @@ class Inspector(QWidget):
         f.addRow(hint)
         lay.addWidget(gb)
         gb, f = _group("Stile")
+        f.addRow("Opacità", self._slider("text", "opacity", 0, 100, 1, 0, " %", 100, scale=100))
         f.addRow(self._check("text", "shadow", "Ombra"))
         row = QHBoxLayout()
         row.addWidget(self._check("text", "box", "Riquadro"))

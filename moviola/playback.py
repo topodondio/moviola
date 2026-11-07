@@ -378,13 +378,14 @@ class Engine(QObject):
         p = min(1.0, max(0.0, p))
         kind = tr["type"]
         a, b = tr["a"], tr["b"]
+        mid = (tr["t0"] + tr["t1"]) / 2  # colore animato: fisso durante la transizione (come nell'export)
         if kind in ("dip_black", "dip_white"):
             first = t < tr["cut"]
             it = a if first else b
             img = self._item_image(pr, it, t, h)
             if img is None:
                 return Frame(t, None)
-            img, lut, key, graded = self._grade(img, pr.grades_for_item(it))
+            img, lut, key, graded = self._grade(img, pr.grades_at(it, mid))
             fr = Frame(t, img, lut, key, graded, self._hist(img, graded, lut) if still else None,
                        it.get("origin", it["source"]))
             if first:
@@ -401,7 +402,7 @@ class Engine(QObject):
             img = self._item_image(pr, it, t, h, slot=k)
             if img is None:
                 continue
-            img, lut, key, graded = self._grade(img, pr.grades_for_item(it))
+            img, lut, key, graded = self._grade(img, pr.grades_at(it, mid))
             ly = {"img": img, "lut": lut, "lut_key": key, "xf": self._xf(it), "alpha": 1.0, "clip": None,
                   "dx": 0.0}
             if k == 1:
@@ -447,8 +448,25 @@ class Engine(QObject):
                 src = pr.source(it["source"])
                 miss = src is not None and not os.path.exists(src["path"])
                 return Frame(t, None, label=label + (" (file non trovato)" if miss else ""))
-            img, lut, key, graded = self._grade(img, pr.grades_for_item(it))
-            fr = Frame(t, img, lut, key, graded, self._hist(img, graded, lut) if still else None, label)
+            a, b = pr.anim_interval(it, t)
+            ga, gb = pr.grades_at(it, a), pr.grades_at(it, b)
+            if color.grade_key(ga) == color.grade_key(gb):
+                img, lut, key, graded = self._grade(img, ga)
+                fr = Frame(t, img, lut, key, graded, self._hist(img, graded, lut) if still else None, label)
+            else:
+                # colore animato: miscela tra il colore all'inizio e alla fine dell'intervallo
+                w = min(1.0, max(0.0, (t - a) / max(b - a, 1e-9)))
+                ia, la, ka, gra = self._grade(img, ga)
+                ib, lb, kb, grb = self._grade(img, gb)
+                if self.cpu_grade:  # senza scheda video: miscela fatta qui
+                    mixed = (ia.astype(np.float32) * (1 - w) + ib.astype(np.float32) * w + 0.5).astype(np.uint8)
+                    fr = Frame(t, mixed, None, "identity", True, luma_hist(mixed, 4) if still else None, label)
+                else:
+                    fr = Frame(t, img, la, ka, False, self._hist(img, False, la) if still else None, label)
+                    fr.layers = [{"img": img, "lut": la, "lut_key": ka, "xf": self._xf(it), "alpha": 1.0,
+                                  "clip": None, "dx": 0.0},
+                                 {"img": img, "lut": lb, "lut_key": kb, "xf": self._xf(it), "alpha": w,
+                                  "clip": None, "dx": 0.0}]
             fr.fade, fr.fade_color = pr.fade_at(it, t)
             fr.xf = self._xf(it)
             fr.item_id = it["id"]

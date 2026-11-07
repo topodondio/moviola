@@ -18,6 +18,7 @@ GRID = [0.25, 0.5, 1, 2, 4]
 class SpeedCurveWidget(QWidget):
     pressed = Signal()
     changed = Signal(list)
+    node_at = Signal(float)  # posizione (0..1) del nodo che si sta spostando: anteprima del fotogramma
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -26,7 +27,8 @@ class SpeedCurveWidget(QWidget):
         self.points = [[0.0, 1.0], [1.0, 1.0]]
         self._drag = None
         self.setMouseTracking(True)
-        self.setToolTip("Clic: aggiungi punto · trascina: sposta · doppio clic: rimuovi")
+        self.setToolTip("Clic: aggiungi punto · trascina: sposta (il visore mostra il fotogramma del nodo)"
+                        " · doppio clic: rimuovi")
 
     def set_points(self, pts):
         self.points = copy.deepcopy(pts) if pts else [[0.0, 1.0], [1.0, 1.0]]
@@ -107,6 +109,8 @@ class SpeedCurveWidget(QWidget):
                 i = next(k for k, q in enumerate(self.points) if q[0] == u and q[1] == v)
                 self.changed.emit(copy.deepcopy(self.points))
         self._drag = i
+        if i is not None:
+            self.node_at.emit(float(self.points[i][0]))
         self.update()
 
     def mouseMoveEvent(self, e):
@@ -124,6 +128,7 @@ class SpeedCurveWidget(QWidget):
             u = min(max(u, pts[i - 1][0] + 0.01), pts[i + 1][0] - 0.01)
         pts[i] = [u, v]
         self.changed.emit(copy.deepcopy(pts))
+        self.node_at.emit(float(u))
         self.update()
 
     def mouseReleaseEvent(self, e):

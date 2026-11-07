@@ -6,7 +6,7 @@ import copy
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QButtonGroup, QComboBox, QDoubleSpinBox, QGroupBox, QHBoxLayout,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QGroupBox, QHBoxLayout,
                                QLabel, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSlider, QTabWidget,
                                QVBoxLayout, QWidget)
 
@@ -27,20 +27,178 @@ class _ResetSlider(QSlider):
         self.double_clicked.emit()
 
 
+class AnimGraph(QWidget):
+    """Andamento nel tempo di un cursore: orizzontale il tempo del pezzo (o della
+    timeline), verticale il valore. Clic aggiunge un punto, trascina lo sposta
+    (il visore mostra quel momento), doppio clic lo toglie."""
+
+    pressed = Signal()
+    changed = Signal(list)
+    seek = Signal(float)
+
+    def __init__(self, lo, hi, parent=None):
+        super().__init__(parent)
+        self.lo, self.hi = float(lo), float(hi)
+        self.duration = 1.0
+        self.playhead = None
+        self.points = []
+        self._drag = None
+        self.setFixedHeight(84)
+        self.setMouseTracking(True)
+        self.setToolTip("Clic: aggiungi punto · trascina: sposta (il visore mostra quel momento) · "
+                        "doppio clic: togli")
+
+    def set_data(self, points, duration, playhead=None):
+        self.points = copy.deepcopy(points or [])
+        self.duration = max(0.04, float(duration))
+        self.playhead = playhead
+        self.update()
+
+    def set_playhead(self, t):
+        self.playhead = t
+        self.update()
+
+    def _box(self):
+        return QRectF(4, 4, self.width() - 8, self.height() - 16)
+
+    def _to_px(self, t, v):
+        b = self._box()
+        x = b.left() + min(1.0, max(0.0, t / self.duration)) * b.width()
+        y = b.bottom() - (min(self.hi, max(self.lo, v)) - self.lo) / (self.hi - self.lo) * b.height()
+        return QPointF(x, y)
+
+    def _from_px(self, p):
+        b = self._box()
+        t = min(1.0, max(0.0, (p.x() - b.left()) / b.width())) * self.duration
+        v = self.lo + min(1.0, max(0.0, (b.bottom() - p.y()) / b.height())) * (self.hi - self.lo)
+        step = (self.hi - self.lo) / 200.0
+        v = round(v / step) * step
+        if abs(v) < (self.hi - self.lo) * 0.015:
+            v = 0.0  # aggancio allo zero
+        return round(t, 3), round(v, 3)
+
+    def _hit(self, pos):
+        for i, (t, v) in enumerate(self.points):
+            q = self._to_px(t, v)
+            if abs(q.x() - pos.x()) < 7 and abs(q.y() - pos.y()) < 7:
+                return i
+        return None
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        b = self._box()
+        p.fillRect(b, QColor(22, 23, 25))
+        p.setPen(QPen(QColor(70, 72, 76), 1, Qt.DashLine))
+        y0 = self._to_px(0, 0.0).y()
+        p.drawLine(QPointF(b.left(), y0), QPointF(b.right(), y0))
+        if self.playhead is not None and 0 <= self.playhead <= self.duration:
+            x = self._to_px(self.playhead, 0).x()
+            p.setPen(QPen(QColor(235, 70, 60), 1))
+            p.drawLine(QPointF(x, b.top()), QPointF(x, b.bottom()))
+        if self.points:
+            pts = sorted(self.points, key=lambda q: q[0])
+            path = QPainterPath(QPointF(b.left(), self._to_px(0, pts[0][1]).y()))
+            for t, v in pts:
+                path.lineTo(self._to_px(t, v))
+            path.lineTo(QPointF(b.right(), self._to_px(self.duration, pts[-1][1]).y()))
+            p.setPen(QPen(QColor(232, 163, 61), 2))
+            p.drawPath(path)
+            p.setPen(QPen(QColor(20, 20, 20), 1))
+            p.setBrush(QColor(232, 163, 61))
+            for t, v in pts:
+                p.drawEllipse(self._to_px(t, v), 4, 4)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(60, 62, 66), 1))
+        p.drawRect(b)
+        p.setPen(QColor(120, 120, 120))
+        f = p.font()
+        f.setPointSizeF(7.5)
+        p.setFont(f)
+        p.drawText(QRectF(b.left(), b.bottom() + 1, 80, 11), Qt.AlignLeft, "0 s")
+        p.drawText(QRectF(b.right() - 80, b.bottom() + 1, 80, 11), Qt.AlignRight, f"{self.duration:.1f} s")
+        p.end()
+
+    def mousePressEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            return
+        self.pressed.emit()
+        i = self._hit(e.position())
+        if i is None:
+            t, v = self._from_px(e.position())
+            self.points.append([t, v])
+            self.points.sort(key=lambda q: q[0])
+            i = next(k for k, q in enumerate(self.points) if q[0] == t and q[1] == v)
+            self.changed.emit(copy.deepcopy(self.points))
+        self._drag = i
+        self.seek.emit(float(self.points[i][0]))
+        self.update()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is None:
+            i = self._hit(e.position())
+            self.setCursor(Qt.PointingHandCursor if i is not None else Qt.CrossCursor)
+            return
+        i = self._drag
+        t, v = self._from_px(e.position())
+        pts = self.points
+        if i > 0:
+            t = max(t, pts[i - 1][0] + 0.01)
+        if i < len(pts) - 1:
+            t = min(t, pts[i + 1][0] - 0.01)
+        pts[i] = [t, v]
+        self.setToolTip(f"{t:.2f} s  →  {v:g}")
+        self.changed.emit(copy.deepcopy(pts))
+        self.seek.emit(float(t))
+        self.update()
+
+    def mouseReleaseEvent(self, e):
+        self._drag = None
+
+    def mouseDoubleClickEvent(self, e):
+        i = self._hit(e.position())
+        if i is not None and len(self.points) > 1:
+            self.pressed.emit()
+            del self.points[i]
+            self.changed.emit(copy.deepcopy(self.points))
+            self.update()
+
+
 class GradeSlider(QWidget):
-    """Cursore con etichetta e valore; doppio clic = azzera."""
+    """Cursore con etichetta e valore; doppio clic = azzera. La casella davanti
+    lo rende animato nel tempo (diventa un grafico)."""
 
     pressed = Signal(str)
     changed = Signal(str, float)
+    anim_changed = Signal(str, object)  # chiave, punti o None
+    anim_seek = Signal(float)
 
     def __init__(self, key, label, lo, hi, step, swatch=None, parent=None):
         super().__init__(parent)
         self.key = key
         self.step = step
         self.scale = 1.0 / step
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 1, 0, 1)
+        self.duration = 1.0
+        self.playhead = 0.0
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 1, 0, 1)
+        outer.setSpacing(2)
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
+        outer.addWidget(row)
+        self.anim_chk = QCheckBox()
+        self.anim_chk.setToolTip("Anima nel tempo: il valore cambia lungo il pezzo (o la timeline)")
+        lay.addWidget(self.anim_chk)
+        self.graph = AnimGraph(lo, hi)
+        self.graph.setVisible(False)
+        outer.addWidget(self.graph)
+        self.anim_chk.toggled.connect(self._anim_toggled)
+        self.graph.pressed.connect(lambda: self.pressed.emit("anim:" + self.key))
+        self.graph.changed.connect(lambda pts: self.anim_changed.emit(self.key, pts))
+        self.graph.seek.connect(self.anim_seek)
+        self._anim_loading = False
         self.lab = _ResetLabel(label)
         self.lab.setFixedWidth(78)
         if swatch:
@@ -54,7 +212,8 @@ class GradeSlider(QWidget):
         self.spin.setRange(lo, hi)
         self.spin.setSingleStep(step)
         self.spin.setDecimals(2 if step < 1 else 0)
-        self.spin.setFixedWidth(56)
+        self.spin.setFixedWidth(62)
+        self.spin.setProperty("noButtons", True)
         self.spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
         self.spin.setAlignment(Qt.AlignRight)
         lay.addWidget(self.lab)
@@ -98,6 +257,41 @@ class GradeSlider(QWidget):
         self.sl.setValue(int(round(v * self.scale)))
         self.spin.setValue(v)
         self._block = False
+
+    def _anim_toggled(self, on):
+        self.sl.setVisible(not on)
+        self.spin.setVisible(not on)
+        self.graph.setVisible(on)
+        if self._anim_loading:
+            return
+        self.pressed.emit("anim:" + self.key)
+        if on:
+            v = self.spin.value()
+            pts = [[0.0, v], [round(self.duration, 3), v]]
+            self.graph.set_data(pts, self.duration, self.playhead)
+            self.anim_changed.emit(self.key, pts)
+        else:
+            self.anim_changed.emit(self.key, None)
+
+    def set_anim(self, points, duration, playhead, enabled=True):
+        """points None = cursore normale."""
+        self._anim_loading = True
+        self.duration = duration
+        self.playhead = playhead
+        self.anim_chk.setEnabled(enabled)
+        self.anim_chk.setChecked(bool(points) and enabled)
+        self._anim_loading = False
+        on = bool(points) and enabled
+        self.sl.setVisible(not on)
+        self.spin.setVisible(not on)
+        self.graph.setVisible(on)
+        if on:
+            self.graph.set_data(points, duration, playhead)
+
+    def set_playhead(self, t):
+        self.playhead = t
+        if self.graph.isVisible():
+            self.graph.set_playhead(t)
 
 
 class CurveWidget(QWidget):
@@ -252,6 +446,8 @@ class ColorPanel(QWidget):
     edit = Signal(str, object)
     target_changed = Signal(str)
     action = Signal(str)  # copia, incolla, azzera, prima_dopo
+    anim_edit = Signal(str, object)  # chiave, punti [[t, v]] o None
+    anim_seek = Signal(float)  # tempo relativo da mostrare nel visore
 
     TARGETS = [("source", "Clip intera"), ("item", "Pezzo"), ("global", "Timeline")]
 
@@ -313,6 +509,8 @@ class ColorPanel(QWidget):
             s = GradeSlider(key, lab, lo, hi, step)
             s.pressed.connect(self.begin_edit)
             s.changed.connect(lambda k, v: self.edit.emit(k, v))
+            s.anim_changed.connect(self.anim_edit)
+            s.anim_seek.connect(self.anim_seek)
             groups[section].addWidget(s)
             self.sliders[key] = s
 
@@ -353,6 +551,8 @@ class ColorPanel(QWidget):
                 s = GradeSlider(f"hsl:{k}:{i}", name, -100, 100, 1, swatch=color.HSL_COLORS[i])
                 s.pressed.connect(self.begin_edit)
                 s.changed.connect(lambda kk, v: self.edit.emit(kk, v))
+                s.anim_changed.connect(self.anim_edit)
+                s.anim_seek.connect(self.anim_seek)
                 wl.addWidget(s)
                 row.append(s)
             self.hsl_sliders[k] = row
@@ -381,15 +581,29 @@ class ColorPanel(QWidget):
             if k == key:
                 self.target_group.button(i).setChecked(True)
 
-    def show_grade(self, grade, info=""):
+    def all_sliders(self):
+        return list(self.sliders.values()) + [s for r in self.hsl_sliders.values() for s in r]
+
+    def show_grade(self, grade, info="", anim_ctx=None):
+        """anim_ctx: (durata, testina relativa) se il bersaglio si può animare
+        (pezzo o timeline), None per la clip intera."""
         g = color.normalize(grade)
+        anim = g.get("anim") or {}
+        dur, ph = anim_ctx if anim_ctx else (1.0, 0.0)
         for k, s in self.sliders.items():
-            s.set_value(g[k])
+            s.set_value(color.value_at(anim[k], ph) if k in anim else g[k])
+            s.set_anim(anim.get(k), dur, ph, enabled=anim_ctx is not None)
         self.curve.set_curves(g["curves"])
         for k, row in self.hsl_sliders.items():
             for i, s in enumerate(row):
-                s.set_value(g["hsl"][k][i])
+                key = f"hsl:{k}:{i}"
+                s.set_value(color.value_at(anim[key], ph) if key in anim else g["hsl"][k][i])
+                s.set_anim(anim.get(key), dur, ph, enabled=anim_ctx is not None)
         self.info.setText(info)
+
+    def set_playhead(self, t):
+        for s in self.all_sliders():
+            s.set_playhead(t)
 
     def set_editable(self, ok: bool):
         for w in list(self.sliders.values()) + [s for r in self.hsl_sliders.values() for s in r]:

@@ -80,6 +80,7 @@ class TimelineView(QWidget):
         self._ghost = None
         self._rubber = None
         self._snap_line = None
+        self._hover_id = None
         self._wave_cache = {}
 
     # ----------------------------------------------------------- geometria
@@ -399,6 +400,55 @@ class TimelineView(QWidget):
             return ("line", None)
         return None
 
+    # ------------------------------------- maniglie: dissolvenze e opacità
+    GRIP_H = 10
+
+    def _fade_grip_x(self, it, rect, key):
+        d = float(it.get(key, 0.0) or 0.0) * self.pps
+        if key == "fade_in":
+            return min(rect.right() - 5, rect.left() + max(5.0, d))
+        return max(rect.left() + 5, rect.right() - max(5.0, d))
+
+    def _fade_grip_hit(self, it, pos):
+        if it is None:
+            return None
+        rect = self.item_rect(it)
+        if rect.width() < 24 or not (rect.top() <= pos.y() <= rect.top() + self.GRIP_H):
+            return None
+        for key in ("fade_in", "fade_out"):
+            if abs(self._fade_grip_x(it, rect, key) - pos.x()) <= 6:
+                return key
+        return None
+
+    def _opacity_y(self, rect, op):
+        top, bot = self._gain_area(rect)
+        return bot - max(0.0, min(1.0, op)) * (bot - top)
+
+    def _opacity_hit(self, it, pos):
+        if it is None or it["kind"] not in ("text", "shape"):
+            return False
+        rect = self.item_rect(it)
+        if pos.x() - rect.left() <= EDGE or rect.right() - pos.x() <= EDGE:
+            return False
+        return abs(self._opacity_y(rect, float(it.get("opacity", 1.0))) - pos.y()) <= 4
+
+    def _paint_handles(self, p, it, rect, hover):
+        """Maniglie delle dissolvenze (quadratini in alto) e linea di opacità."""
+        if it["kind"] in ("text", "shape"):
+            y = self._opacity_y(rect, float(it.get("opacity", 1.0)))
+            p.setPen(QPen(QColor(120, 200, 255), 1.5))
+            p.drawLine(QPointF(rect.left() + 2, y), QPointF(rect.right() - 2, y))
+        if rect.width() < 24:
+            return
+        for key in ("fade_in", "fade_out"):
+            x = self._fade_grip_x(it, rect, key)
+            on = float(it.get(key, 0.0) or 0.0) > 0
+            if not (on or hover):
+                continue
+            p.setPen(QPen(QColor(20, 20, 20), 1))
+            p.setBrush(QColor(255, 255, 255) if on else QColor(255, 255, 255, 140))
+            p.drawRect(QRectF(x - 3.5, rect.top() + 1, 7, 7))
+
     def _paint_item(self, p, it, rect):
         pr = self.project
         sel = it["id"] in self.selection
@@ -451,6 +501,15 @@ class TimelineView(QWidget):
                 poly = [QPointF(rect.right(), rect.top()), QPointF(rect.right() - w, rect.top()),
                         QPointF(rect.right(), rect.bottom())]
             p.drawPolygon(QPolygonF(poly))
+        # etichetta colore della clip o della parte da cui viene il pezzo
+        tag = None
+        if not overlay:
+            ref = pr.subclip(it.get("origin") or "") or pr.source(it["source"])
+            tag = (ref or {}).get("tag") or ((src or {}).get("tag"))
+        if tag:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(tag))
+            p.drawRect(QRectF(rect.left(), rect.top(), rect.width(), 4))
         badges = []
         if it.get("speed_curve"):
             badges.append("velocità ∿")
@@ -481,6 +540,7 @@ class TimelineView(QWidget):
             if it.get("link") is None and src is not None and src.get("has_audio") and src.get("has_video"):
                 lab += "  (scollegato)"
         p.drawText(rect.adjusted(5, 1, -16, 0), Qt.AlignLeft | Qt.AlignTop, lab)
+        self._paint_handles(p, it, rect, sel or it["id"] == self._hover_id)
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(C_SEL if sel else base.darker(150), 2 if sel else 1))
         p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
@@ -602,6 +662,23 @@ class TimelineView(QWidget):
             return
         rect = self.item_rect(it)
         origin = json.dumps(pr.data["items"])
+        mods = e.modifiers()
+        if alt and (mods & Qt.ControlModifier or mods & Qt.MetaModifier) and not spd.is_static(it):
+            # Ctrl/Cmd+Alt+trascina: scorre il contenuto (posizione e durata restano)
+            pr.checkpoint()
+            self._drag = ("slip", it["id"], self.t_of(pos.x()), origin)
+            self.setCursor(Qt.SizeHorCursor)
+            self.host.slip_preview(it["id"])
+            return
+        fg = self._fade_grip_hit(it, pos)
+        if fg is not None:
+            pr.checkpoint()
+            self._drag = ("fade", it["id"], fg, origin)
+            return
+        if self._opacity_hit(it, pos):
+            pr.checkpoint()
+            self._drag = ("opacity", it["id"], origin)
+            return
         gh = self._gain_hit(it, pos) if not alt else None
         if gh is not None:
             pr.checkpoint()
@@ -637,8 +714,21 @@ class TimelineView(QWidget):
                 self.setCursor(Qt.SizeHorCursor)
                 return
             it = self.item_at(pos)
+            hid = it["id"] if it is not None else None
+            if hid != self._hover_id:
+                self._hover_id = hid
+                self.update()
             if it is not None:
                 rect = self.item_rect(it)
+                fg = self._fade_grip_hit(it, pos)
+                if fg is not None:
+                    self.setCursor(Qt.SizeHorCursor)
+                    self.setToolTip("Trascina per la dissolvenza " + ("in entrata" if fg == "fade_in" else "in uscita"))
+                    return
+                if self._opacity_hit(it, pos):
+                    self.setCursor(Qt.SizeVerCursor)
+                    self.setToolTip(f"Opacità {float(it.get('opacity', 1.0)) * 100:.0f}% (trascina su o giù)")
+                    return
                 gh = self._gain_hit(it, pos)
                 if gh is not None:
                     self.setCursor(Qt.PointingHandCursor if gh[0] == "point" else Qt.CrossCursor)
@@ -661,6 +751,51 @@ class TimelineView(QWidget):
             if m is not None:
                 m["t"] = pr.snap(max(0.0, self._snap(self.t_of(pos.x()), exclude=())))
                 self.update()
+            return
+        if kind == "fade":
+            _, iid, key, origin = self._drag
+            it = pr.item(iid)
+            if it is None:
+                return
+            rect = self.item_rect(it)
+            dur = pr.item_dur(it)
+            other = float(it.get("fade_out" if key == "fade_in" else "fade_in", 0.0) or 0.0)
+            if key == "fade_in":
+                v = (pos.x() - rect.left()) / self.pps
+            else:
+                v = (rect.right() - pos.x()) / self.pps
+            v = max(0.0, min(dur - other, v))
+            v = 0.0 if v * self.pps < 4 else round(v, 2)
+            it[key] = v
+            self.setToolTip(f"Dissolvenza {v:.2f} s")
+            self.changed.emit()
+            self.update()
+            return
+        if kind == "opacity":
+            _, iid, origin = self._drag
+            it = pr.item(iid)
+            if it is None:
+                return
+            top, bot = self._gain_area(self.item_rect(it))
+            op = max(0.0, min(1.0, (bot - pos.y()) / max(bot - top, 1)))
+            it["opacity"] = round(op, 3)
+            self.setToolTip(f"Opacità {op * 100:.0f}%")
+            self.changed.emit()
+            self.update()
+            return
+        if kind == "slip":
+            _, iid, t0, origin = self._drag
+            pr.data["items"] = json.loads(origin)
+            it = pr.item(iid)
+            if it is None:
+                return
+            d = -(self.t_of(pos.x()) - t0) * pr.speed(it)
+            got = pr.slip([iid], d)
+            it = pr.item(iid)
+            self.setToolTip(f"Contenuto spostato di {got:+.2f} s  ·  inizio a {it['src_in']:.2f} s del file")
+            self.changed.emit()
+            self.host.slip_preview(iid)
+            self.update()
             return
         if kind == "gain":
             _, iid, k, origin = self._drag
@@ -730,8 +865,8 @@ class TimelineView(QWidget):
                 self.project.drop_checkpoint()
             self.project.markers.sort(key=lambda x: x["t"])
             self.host.timeline_edit_done()
-        elif d[0] in ("trim", "move", "gain"):
-            origin = d[5] if d[0] == "move" else d[3]
+        elif d[0] in ("trim", "move", "gain", "fade", "opacity", "slip"):
+            origin = d[5] if d[0] == "move" else d[-1] if d[0] in ("fade", "opacity", "slip") else d[3]
             if json.dumps(self.project.data["items"]) == origin:
                 self.project.drop_checkpoint()
             self.changed.emit()
@@ -757,6 +892,11 @@ class TimelineView(QWidget):
             return
         if it is not None:
             self.action.emit("open_effects", [it["id"]])
+
+    def leaveEvent(self, e):
+        if self._hover_id is not None:
+            self._hover_id = None
+            self.update()
 
     def wheelEvent(self, e):
         dx = e.angleDelta().x()
@@ -870,6 +1010,9 @@ class TimelineView(QWidget):
         if any(i.get("gain_pts") for i in its):
             m.addAction("Azzera volume disegnato", lambda: self.action.emit("clear_gain", ids))
         m.addSeparator()
+        if any(not spd.is_static(i) for i in its):
+            m.addAction("Scorri contenuto di 1 fotogramma ←\t,", lambda: self.action.emit("slip:-1", ids))
+            m.addAction("Scorri contenuto di 1 fotogramma →\t.", lambda: self.action.emit("slip:1", ids))
         m.addAction("Taglia alla testina\tB", lambda: self.action.emit("split", ids))
         m.addAction("Elimina\tCanc", lambda: self.action.emit("delete", ids))
         m.addAction("Elimina e chiudi lo spazio\tMaiusc+Canc", lambda: self.action.emit("ripple_delete", ids))
