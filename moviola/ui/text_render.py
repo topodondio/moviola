@@ -39,8 +39,44 @@ def _layout(item, frame: QRectF):
     return px, font, fm, lines, widths, lh, box
 
 
+def shape_rect(item, frame: QRectF) -> QRectF:
+    w = max(0.0, float(item.get("width", 0.6))) * frame.width()
+    h = max(0.0, float(item.get("height", 0.16))) * frame.height()
+    cx = frame.left() + float(item.get("pos_x", 0.5)) * frame.width()
+    cy = frame.top() + float(item.get("pos_y", 0.5)) * frame.height()
+    return QRectF(cx - w / 2, cy - h / 2, w, h)
+
+
+def draw_shape(p: QPainter, frame: QRectF, item, opacity: float = 1.0):
+    a = max(0.0, min(1.0, float(item.get("opacity", 1.0)))) * opacity
+    if a <= 0.001:
+        return
+    r = shape_rect(item, frame)
+    c = QColor(item.get("color", "#000000"))
+    c.setAlphaF(a)
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setPen(Qt.NoPen)
+    p.setBrush(c)
+    rad = max(0.0, float(item.get("radius", 0.0))) * min(r.width(), r.height()) / 2
+    if rad > 0.5:
+        p.drawRoundedRect(r, rad, rad)
+    else:
+        p.drawRect(r)
+    p.restore()
+
+
+def draw_overlay(p: QPainter, frame: QRectF, item, opacity: float = 1.0):
+    if item.get("kind") == "shape":
+        draw_shape(p, frame, item, opacity)
+    else:
+        draw_text(p, frame, item, opacity)
+
+
 def text_box(item, frame: QRectF) -> QRectF:
-    """Rettangolo occupato dalla scritta (per selezionarla col mouse)."""
+    """Rettangolo occupato dalla scritta o dal riquadro (per selezionarlo col mouse)."""
+    if item.get("kind") == "shape":
+        return shape_rect(item, frame)
     px, _, _, _, _, _, box = _layout(item, frame)
     pad = px * 0.3
     return box.adjusted(-pad, -pad * 0.6, pad, pad * 0.6)
@@ -88,6 +124,6 @@ def render_png(item, W: int, H: int, path: str) -> bool:
     img = QImage(W, H, QImage.Format_ARGB32_Premultiplied)
     img.fill(Qt.transparent)
     p = QPainter(img)
-    draw_text(p, QRectF(0, 0, W, H), item, 1.0)
+    draw_overlay(p, QRectF(0, 0, W, H), item, 1.0)
     p.end()
     return img.save(path, "PNG")

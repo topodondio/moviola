@@ -19,7 +19,7 @@ def _project_info(path):
         n = len(data.get("sources", []))
         end = 0.0
         for it in data.get("items", []):
-            d = (it["src_out"] - it["src_in"]) if it.get("kind") == "text" else spd.item_dur(it)
+            d = (it["src_out"] - it["src_in"]) if it.get("kind") in ("text", "shape") else spd.item_dur(it)
             end = max(end, it["start"] + d)
         m, s = divmod(int(end), 60)
         st = data.get("settings", {})

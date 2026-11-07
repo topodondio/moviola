@@ -11,11 +11,12 @@ import json
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMenu, QPushButton, QScrollBar, QSlider, QVBoxLayout,
                                QWidget)
 
 from .. import color
+from . import icons
 from .bin_panel import MIME
 
 HEAD = 92
@@ -32,6 +33,7 @@ C_HEAD = QColor(38, 40, 43)
 C_VIDEO = QColor(70, 98, 138)
 C_AUDIO = QColor(52, 112, 98)
 C_TEXT = QColor(122, 84, 150)
+C_SHAPE = QColor(150, 110, 60)
 C_SEL = QColor(232, 163, 61)
 C_PLAY = QColor(235, 70, 60)
 
@@ -73,6 +75,7 @@ class TimelineView(QWidget):
         self._drag = None
         self._ghost = None
         self._rubber = None
+        self._snap_line = None
         self._wave_cache = {}
 
     # ----------------------------------------------------------- geometria
@@ -236,6 +239,12 @@ class TimelineView(QWidget):
             p.drawRoundedRect(br, 3, 3)
             p.setPen(QColor(220, 220, 220))
             p.drawText(br, Qt.AlignCenter, lab)
+        # guida dell'aggancio magnetico
+        if self._snap_line is not None and (self._drag is not None or self._ghost):
+            xs = self.x_of(self._snap_line)
+            if xs >= HEAD:
+                p.setPen(QPen(C_SEL, 1.5, Qt.DashLine))
+                p.drawLine(QPointF(xs, RULER), QPointF(xs, self.height()))
         # testina
         x = self.x_of(self.playhead)
         if x >= HEAD:
@@ -279,9 +288,10 @@ class TimelineView(QWidget):
         pr = self.project
         sel = it["id"] in self.selection
         kind = it["kind"]
-        base = {"video": C_VIDEO, "audio": C_AUDIO, "text": C_TEXT}[kind]
-        src = pr.source(it["source"]) if kind != "text" else None
-        missing = kind != "text" and src is None
+        base = {"video": C_VIDEO, "audio": C_AUDIO, "text": C_TEXT, "shape": C_SHAPE}[kind]
+        overlay = kind in ("text", "shape")
+        src = pr.source(it["source"]) if not overlay else None
+        missing = not overlay and src is None
         p.save()
         p.setClipRect(rect.intersected(QRectF(HEAD, RULER, self.width() - HEAD, self.height())))
         p.setPen(Qt.NoPen)
@@ -332,7 +342,12 @@ class TimelineView(QWidget):
             p.drawText(rect.adjusted(0, rect.height() - 16, -6, 0), Qt.AlignRight | Qt.AlignVCenter,
                        "  ".join(badges))
         p.setPen(QColor(245, 245, 245))
-        if kind == "text":
+        if kind == "shape":
+            p.setPen(QPen(QColor(20, 20, 20), 1))
+            p.setBrush(QColor(it.get("color", "#000000")))
+            p.drawRect(QRectF(rect.left() + 5, rect.top() + 18, 14, 10))
+            lab = "▭  Riquadro"
+        elif kind == "text":
             lab = "T  " + ((it.get("text") or "").split("\n")[0] or "(vuota)")
         else:
             lab = it.get("origin") or it["source"]
@@ -377,20 +392,28 @@ class TimelineView(QWidget):
 
     # ------------------------------------------------------------- mouse
     def _snap(self, t, exclude=(), moving_edges=None):
-        """Aggancio ai bordi dei pezzi e alla testina."""
-        if not self.snapping:
+        """Aggancio magnetico ai bordi dei pezzi di tutte le tracce, alla testina
+        e all'inizio. Restituisce il tempo agganciato (o lo spostamento da
+        aggiungere se moving_edges è dato) e memorizza dove disegnare la guida."""
+        self._snap_line = None
+        suspended = bool(QGuiApplication.keyboardModifiers() & Qt.ShiftModifier)
+        if not self.snapping or suspended:
             return t if moving_edges is None else 0.0
         pts = self.project.snap_points(exclude) + [self.playhead]
-        tol = 10 / self.pps
+        tol = 12 / self.pps
         if moving_edges is None:
             best = min(pts, key=lambda q: abs(q - t), default=t)
-            return best if abs(best - t) <= tol else t
-        best_d = None
+            if abs(best - t) <= tol:
+                self._snap_line = best
+                return best
+            return t
+        best_d, best_q = None, None
         for e in moving_edges:
             for q in pts:
                 d = q - (e + t)
                 if abs(d) <= tol and (best_d is None or abs(d) < abs(best_d)):
-                    best_d = d
+                    best_d, best_q = d, q
+        self._snap_line = best_q
         return best_d or 0.0
 
     def mousePressEvent(self, e):
@@ -514,6 +537,7 @@ class TimelineView(QWidget):
     def mouseReleaseEvent(self, e):
         d = self._drag
         self._drag = None
+        self._snap_line = None
         if d is None:
             return
         if d[0] == "rubber":
@@ -560,6 +584,16 @@ class TimelineView(QWidget):
             return r["track"], min(r["track"], na - 1)
         return min(r["track"], nv - 1), r["track"]
 
+    def _drop_time(self, ids, pos):
+        """Punto di rilascio: si aggancia sia l'inizio sia la fine di ciò che si trascina."""
+        total = 0.0
+        for rid in ids:
+            src, a, b = self.project.range_of(rid)
+            if src is not None:
+                total += b - a
+        t0 = self.t_of(pos.x())
+        return max(0.0, t0 + self._snap(t0, moving_edges=[0.0, total]))
+
     def dragEnterEvent(self, e):
         if e.mimeData().hasFormat(MIME) or e.mimeData().hasUrls():
             e.acceptProposedAction()
@@ -573,7 +607,7 @@ class TimelineView(QWidget):
             return
         ids = json.loads(md.data(MIME).data().decode())
         pos = e.position()
-        t = self._snap(self.t_of(pos.x()))
+        t = self._drop_time(ids, pos)
         vt, at = self._drop_target(pos)
         ghost = []
         for rid in ids:
@@ -584,7 +618,9 @@ class TimelineView(QWidget):
             if src["has_video"]:
                 ghost.append(("video", vt, t, t + d))
             if src["has_audio"]:
-                ghost.append(("audio", at, t, t + d))
+                on_audio = (self.row_at(pos.y()) or {}).get("kind") == "audio"
+                track = at if (src["has_video"] or on_audio) else len(self.project.tracks("audio")) - 1
+                ghost.append(("audio", track, t, t + d))
             t += d
         self._ghost = ghost
         self.update()
@@ -592,6 +628,7 @@ class TimelineView(QWidget):
 
     def dragLeaveEvent(self, e):
         self._ghost = None
+        self._snap_line = None
         self.update()
 
     def dropEvent(self, e):
@@ -601,7 +638,9 @@ class TimelineView(QWidget):
             ids = json.loads(md.data(MIME).data().decode())
             pos = e.position()
             vt, at = self._drop_target(pos)
-            self.host.add_refs_at(ids, self._snap(self.t_of(pos.x())), vt, at)
+            r = self.row_at(pos.y())
+            self.host.add_refs_at(ids, self._drop_time(ids, pos), vt, at,
+                                  audio_row=bool(r and r["kind"] == "audio"))
             e.acceptProposedAction()
         elif md.hasUrls():
             self.host.import_paths([u.toLocalFile() for u in md.urls() if u.isLocalFile()])
@@ -674,18 +713,24 @@ class TimelinePanel(QWidget):
         bar.addWidget(self.btn_settings)
         bar.addSpacing(12)
         self.btn_split = QPushButton("✂ Taglia (B)")
-        self.btn_snap = QPushButton("Aggancio (N)")
+        self.btn_snap = QPushButton(" Aggancio")
+        self.btn_snap.setIcon(icons.icon("magnet", 16))
         self.btn_snap.setCheckable(True)
         self.btn_snap.setChecked(True)
+        self.btn_snap.setToolTip("Aggancio magnetico (N): trascinando o rifilando, i bordi si attaccano a quelli\n"
+                                 "delle altre clip su qualsiasi traccia, alla testina e all'inizio.\n"
+                                 "Una linea arancione mostra dove si è agganciato. Tieni premuto Maiusc\n"
+                                 "mentre trascini per sospenderlo un attimo.")
+        self.btn_snap.setStyleSheet("QPushButton:checked { background: #5a4520; border-color: #e8a33d; }")
         self.btn_fit = QPushButton("Adatta")
-        self.btn_text = QPushButton("T  Scritta")
+        self.btn_text = QPushButton(" Scritta")
+        self.btn_text.setIcon(icons.icon("text", 16))
         self.btn_text.setToolTip("Aggiungi una scritta alla testina (T)")
-        self.btn_effects = QPushButton("Effetti")
-        self.btn_effects.setToolTip("Velocità, curva di velocità, zoom e posizione, bande nere, dissolvenze "
-                                    "del pezzo selezionato (doppio clic su un pezzo)")
-        self.btn_color = QPushButton("Colore")
-        self.btn_color.setToolTip("Correzione colore")
-        for b in (self.btn_split, self.btn_snap, self.btn_fit, self.btn_text, self.btn_effects, self.btn_color):
+        self.btn_box = QPushButton(" Riquadro")
+        self.btn_box.setIcon(icons.icon("box", 16))
+        self.btn_box.setToolTip("Aggiungi un riquadro colorato alla testina (R): sfondo per le scritte,\n"
+                                "fascia, schermo pieno colorato…")
+        for b in (self.btn_split, self.btn_snap, self.btn_fit, self.btn_text, self.btn_box):
             bar.addWidget(b)
         bar.addStretch(1)
         bar.addWidget(QLabel("Zoom"))

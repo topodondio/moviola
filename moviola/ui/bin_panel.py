@@ -1,4 +1,5 @@
-"""Pannello "Clip": clip intere e parti selezionate, organizzate ad albero.
+"""Scheda "Clip": clip intere e parti selezionate, organizzate ad albero,
+in due sezioni (video, audio/musica).
 
 clip1 (file originale)
   ├ clip1.1
@@ -11,8 +12,8 @@ import os
 
 from PySide6.QtCore import QItemSelectionModel, QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QIcon, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QMenu, QPushButton, QTreeWidget,
-                               QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
+                               QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 
 MIME = "application/x-moviola-refs"
@@ -86,6 +87,8 @@ class BinTree(QTreeWidget):
 
 
 class BinPanel(QWidget):
+    """Due sezioni: VIDEO (clip con immagine) e AUDIO (musica e suoni)."""
+
     selection_changed = Signal(list)  # id selezionati
     current_changed = Signal(str)  # id da mostrare nel visore
     request = Signal(str, list)  # azione, id
@@ -94,40 +97,70 @@ class BinPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setContentsMargins(4, 6, 4, 4)
         lay.setSpacing(4)
-        row = QHBoxLayout()
-        b1 = QPushButton("+ Importa clip")
-        b2 = QPushButton("+ Cartella")
-        b1.setToolTip("Aggiungi file video (Ctrl/Cmd+I). Puoi anche trascinarli qui.")
-        b1.clicked.connect(lambda: self.request.emit("import", []))
-        b2.clicked.connect(lambda: self.request.emit("import_folder", []))
-        row.addWidget(b1)
-        row.addWidget(b2)
-        row.addStretch(1)
-        lay.addLayout(row)
-        self.tree = BinTree()
-        lay.addWidget(self.tree, 1)
-        self.tree.itemSelectionChanged.connect(self._sel)
-        self.tree.customContextMenuRequested.connect(self._menu)
-        self.tree.files_dropped.connect(self.import_files)
-        self.tree.itemDoubleClicked.connect(lambda it, c: self.request.emit("append", [it.data(0, Qt.UserRole)]))
+        split = QSplitter(Qt.Vertical)
+        split.setChildrenCollapsible(False)
+        self.tree, w_video = self._section("VIDEO", [("+ Clip", "import", "Importa clip video (Ctrl/Cmd+I).\n"
+                                                      "Puoi anche trascinare file o cartelle qui."),
+                                                     ("+ Cartella", "import_folder", "Importa tutta una cartella")])
+        self.audio_tree, w_audio = self._section("AUDIO · MUSICA", [("+ Audio", "import_audio",
+                                                                      "Importa musica o suoni (mp3, wav, m4a, aiff…).\n"
+                                                                      "In timeline vanno sull'ultima traccia audio.")])
+        split.addWidget(w_video)
+        split.addWidget(w_audio)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 2)
+        split.setSizes([420, 220])
+        lay.addWidget(split, 1)
+        self.trees = (self.tree, self.audio_tree)
         self._items: dict[str, QTreeWidgetItem] = {}
         self._status: dict[str, str] = {}
         self._icons: dict[str, QIcon] = {}
         self._block = False
+        self._active = self.tree
+
+    def _section(self, title, buttons):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(3)
+        row = QHBoxLayout()
+        lab = QLabel(title)
+        lab.setStyleSheet("color:#e8a33d; font-weight:700; letter-spacing:1px;")
+        row.addWidget(lab)
+        row.addStretch(1)
+        for text, req, tip in buttons:
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _=False, r=req: self.request.emit(r, []))
+            row.addWidget(b)
+        v.addLayout(row)
+        tree = BinTree()
+        v.addWidget(tree, 1)
+        tree.itemSelectionChanged.connect(lambda t=tree: self._sel(t))
+        tree.customContextMenuRequested.connect(lambda pos, t=tree: self._menu(t, pos))
+        tree.files_dropped.connect(self.import_files)
+        tree.itemDoubleClicked.connect(lambda it, c: self.request.emit("append", [it.data(0, Qt.UserRole)]))
+        return tree, w
 
     # ------------------------------------------------------------------
+    def _tree_for(self, src):
+        return self.tree if src.get("has_video") else self.audio_tree
+
     def rebuild(self, project, select=None):
         self._block = True
         expanded = {k for k, it in self._items.items() if it.isExpanded()}
-        selected = set(select) if select is not None else set(self.tree.selected_ids())
+        selected = set(select) if select is not None else set(self.selected_ids())
         first = not self._items
-        self.tree.clear()
+        for t in self.trees:
+            t.clear()
         self._items.clear()
         for src in project.sources:
+            tree = self._tree_for(src)
             missing = not os.path.exists(src["path"])
-            name = src["id"] + "   " + (src.get("label") or src["name"])
+            mark = "" if src.get("has_video") else "♪ "
+            name = mark + src["id"] + "   " + (src.get("label") or src["name"])
             top = QTreeWidgetItem([name, fmt_dur(src["duration"]), "", self._status.get(src["id"], "")])
             top.setData(0, Qt.UserRole, src["id"])
             tip = src["path"] + (f"\n{src['width']}×{src['height']} · {src['fps']:.2f} fps" if src["has_video"] else "")
@@ -140,7 +173,7 @@ class BinPanel(QWidget):
             f = top.font(0)
             f.setBold(True)
             top.setFont(0, f)
-            self.tree.addTopLevelItem(top)
+            tree.addTopLevelItem(top)
             self._items[src["id"]] = top
             for sub in project.subclips_of(src["id"]):
                 lab = sub["id"] + (f"   {sub['label']}" if sub.get("label") else "")
@@ -156,8 +189,10 @@ class BinPanel(QWidget):
                 self._items[k].setSelected(True)
         cur = next((self._items[k] for k in (select or []) if k in self._items), None)
         if cur is not None:
-            self.tree.setCurrentItem(cur, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
-            self.tree.scrollToItem(cur)
+            t = cur.treeWidget()
+            t.setCurrentItem(cur, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            t.scrollToItem(cur)
+            self._active = t
         self._block = False
 
     def update_subclip(self, sub):
@@ -184,34 +219,49 @@ class BinPanel(QWidget):
 
     def select(self, ids):
         self._block = True
-        self.tree.clearSelection()
+        for t in self.trees:
+            t.clearSelection()
         for k in ids:
             if k in self._items:
                 self._items[k].setSelected(True)
-                self.tree.scrollToItem(self._items[k])
+                self._items[k].treeWidget().scrollToItem(self._items[k])
         if ids and ids[0] in self._items:
-            self.tree.setCurrentItem(self._items[ids[0]], 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            it = self._items[ids[0]]
+            it.treeWidget().setCurrentItem(it, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            self._active = it.treeWidget()
         self._block = False
 
     def selected_ids(self):
-        return self.tree.selected_ids()
+        out = []
+        for t in self.trees:
+            out += t.selected_ids()
+        return out
 
-    def _sel(self):
+    def _sel(self, tree):
         if self._block:
             return
-        ids = self.tree.selected_ids()
+        # la selezione è in una sola sezione alla volta
+        if tree.selectedItems():
+            self._block = True
+            for t in self.trees:
+                if t is not tree:
+                    t.clearSelection()
+            self._block = False
+            self._active = tree
+        ids = self.selected_ids()
         self.selection_changed.emit(ids)
-        cur = self.tree.currentItem()
+        cur = tree.currentItem()
         if cur is not None and cur.isSelected():
             self.current_changed.emit(cur.data(0, Qt.UserRole))
         elif ids:
             self.current_changed.emit(ids[-1])
 
-    def _menu(self, pos):
-        ids = self.tree.selected_ids()
-        it = self.tree.itemAt(pos)
+    def _menu(self, tree, pos):
+        ids = tree.selected_ids()
+        it = tree.itemAt(pos)
         if it is not None and it.data(0, Qt.UserRole) not in ids:
             ids = [it.data(0, Qt.UserRole)]
+        audio = tree is self.audio_tree
         m = QMenu(self)
         if ids:
             m.addAction("Accoda alla timeline\tE", lambda: self.request.emit("append", ids))
@@ -221,12 +271,15 @@ class BinPanel(QWidget):
             m.addAction("Rinomina…\tF2", lambda: self.request.emit("rename", ids[:1]))
             m.addAction("Elimina", lambda: self.request.emit("delete", ids))
             m.addSeparator()
-            m.addAction("Copia regolazioni colore", lambda: self.request.emit("copy_grade", ids[:1]))
-            m.addAction("Incolla regolazioni colore", lambda: self.request.emit("paste_grade", ids))
-            m.addSeparator()
-            m.addAction("Crea proxy", lambda: self.request.emit("proxy", ids))
+            if not audio:
+                m.addAction("Copia regolazioni colore", lambda: self.request.emit("copy_grade", ids[:1]))
+                m.addAction("Incolla regolazioni colore", lambda: self.request.emit("paste_grade", ids))
+                m.addSeparator()
+                m.addAction("Crea proxy", lambda: self.request.emit("proxy", ids))
             m.addAction("Ricollega file…", lambda: self.request.emit("relink", ids[:1]))
             m.addAction("Mostra il file nella cartella", lambda: self.request.emit("reveal", ids[:1]))
+        elif audio:
+            m.addAction("Importa audio…", lambda: self.request.emit("import_audio", []))
         else:
             m.addAction("Importa clip…", lambda: self.request.emit("import", []))
-        m.exec(self.tree.viewport().mapToGlobal(pos))
+        m.exec(tree.viewport().mapToGlobal(pos))

@@ -8,7 +8,7 @@ import time
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence, QPixmap
-from PySide6.QtWidgets import (QComboBox, QDockWidget, QStyle, QTabWidget, QToolBar, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QComboBox, QDockWidget, QTabWidget, QToolBar, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QMainWindow, QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget)
 
 from .. import audio, color, media, paths
@@ -17,13 +17,16 @@ from ..project import Project
 from .bin_panel import BinPanel
 from .color_panel import ColorPanel
 from .export_dialog import ExportDialog
+from . import icons
 from .inspector import Inspector
 from .welcome import WelcomeDialog
-from .project_settings import ProjectSettingsDialog, bars_for_ratio
+from .project_settings import ProjectSettingsDialog
 from .text_render import default_family, render_png, text_box
 from .source_bar import SourceBar
 from .timeline import TimelinePanel, tc
 from .viewer import CpuViewer, GlViewer
+
+TAB_CLIP, TAB_EFFECTS, TAB_COLOR = 0, 1, 2
 
 SHORTCUTS = """
 <b>Riproduzione</b><br>
@@ -36,8 +39,8 @@ Invio o M: crea la parte (clip1.1, clip1.2, …) · Ctrl/Cmd+D: duplica · F2: r
 E: accoda alla timeline · F9: inserisci alla testina della timeline<br><br>
 <b>Timeline</b><br>
 B: taglia alla testina · Canc: elimina · Maiusc+Canc: elimina e chiudi lo spazio<br>
-N: aggancio on/off · + / −: zoom · Maiusc+Z: adatta · Alt+trascina: muovi solo video o solo audio<br>
-T: aggiungi una scritta alla testina · trascina nel visore: sposta scritta o inquadratura<br>
+N: aggancio magnetico on/off (Maiusc mentre trascini lo sospende) · + / −: zoom · Maiusc+Z: adatta · Alt+trascina: muovi solo video o solo audio<br>
+T: aggiungi una scritta · R: aggiungi un riquadro colorato · trascina nel visore: sposta scritta, riquadro o inquadratura<br>
 Ctrl/Cmd+clic: selezione multipla · Ctrl/Cmd+A: seleziona tutto<br><br>
 <b>Colore</b><br>
 Ctrl/Cmd+Maiusc+C / V: copia / incolla regolazioni · \\ : prima / dopo<br>
@@ -164,25 +167,31 @@ class MainWindow(QMainWindow):
         split.setSizes([520, 330])
         self.setCentralWidget(split)
 
+        # un'unica colonna con le linguette CLIP · EFFETTI · COLORE
         self.bin = BinPanel()
-        d = QDockWidget("Clip", self)
-        d.setObjectName("dock_clip")
-        d.setWidget(self.bin)
-        d.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.addDockWidget(Qt.LeftDockWidgetArea, d)
         self.color_panel = ColorPanel()
         self.inspector = Inspector()
         self.right_tabs = QTabWidget()
-        self.right_tabs.addTab(self.inspector, "Effetti")
-        self.right_tabs.addTab(self.color_panel, "Colore")
-        self.right_tabs.setCurrentIndex(0)
-        self.right_tabs.setStyleSheet("QTabBar::tab { padding: 6px 18px; font-weight: 600; }")
-        d2 = QDockWidget("Effetti e colore", self)
-        d2.setObjectName("dock_colore")
-        d2.setWidget(self.right_tabs)
-        d2.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.addDockWidget(Qt.RightDockWidgetArea, d2)
-        self.resizeDocks([d, d2], [330, 330], Qt.Horizontal)
+        self.right_tabs.setDocumentMode(True)
+        self.right_tabs.addTab(self.bin, "CLIP")
+        self.right_tabs.addTab(self.inspector, "EFFETTI")
+        self.right_tabs.addTab(self.color_panel, "COLORE")
+        self.right_tabs.tabBar().setExpanding(True)
+        self.right_tabs.setCurrentIndex(TAB_CLIP)
+        self.right_tabs.setStyleSheet(
+            "QTabWidget::pane { border: none; }"
+            "QTabBar::tab { padding: 8px 6px; font-weight: 700; letter-spacing: 1px; color: #8d8d8d;"
+            " background: #1f2022; border: none; border-bottom: 2px solid #2c2d30; min-width: 70px; }"
+            "QTabBar::tab:selected { color: #f0f0f0; background: #26272a; border-bottom: 2px solid #e8a33d; }"
+            "QTabBar::tab:hover:!selected { color: #cfcfcf; }")
+        d = QDockWidget("", self)
+        d.setObjectName("dock_colonna")
+        d.setTitleBarWidget(QWidget())  # niente barra del titolo: bastano le linguette
+        d.setWidget(self.right_tabs)
+        d.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.addDockWidget(Qt.LeftDockWidgetArea, d)
+        self.side_dock = d
+        self.resizeDocks([d], [370], Qt.Horizontal)
         self.statusBar().showMessage("Pronto. Importa le clip con Ctrl/Cmd+I o trascinandole nella lista.")
 
     def _make_viewer(self, gpu: bool):
@@ -301,6 +310,7 @@ class MainWindow(QMainWindow):
         act(m, "Adatta alla finestra", self.timeline.view.zoom_fit, "Shift+Z")
         m.addSeparator()
         act(m, "Aggiungi scritta alla testina", self.add_text, "T")
+        act(m, "Aggiungi riquadro colorato alla testina", self.add_box, "R")
         m.addSeparator()
         act(m, "Aggiungi traccia video", lambda: self.timeline_action("add_video_track", []))
         act(m, "Aggiungi traccia audio", lambda: self.timeline_action("add_audio_track", []))
@@ -340,9 +350,10 @@ class MainWindow(QMainWindow):
         self.act_gpu = act(m, "Anteprima con la scheda video (OpenGL)", self.set_gpu, checkable=True,
                            checked=not self.engine.cpu_grade)
 
-        act(m, "Pannello Effetti (velocità, inquadratura, dissolvenze, scritte)", lambda: self.show_tab(0),
-            "Ctrl+3")
-        act(m, "Pannello Colore", lambda: self.show_tab(1), "Ctrl+4")
+        act(m, "Scheda Clip", lambda: self.show_tab(TAB_CLIP), "Ctrl+3")
+        act(m, "Scheda Effetti (velocità, inquadratura, dissolvenze, scritte, riquadri)",
+            lambda: self.show_tab(TAB_EFFECTS), "Ctrl+4")
+        act(m, "Scheda Colore", lambda: self.show_tab(TAB_COLOR), "Ctrl+5")
 
         m = mb.addMenu("Aiuto")
         act(m, "Scorciatoie da tastiera", self.show_shortcuts, "F1")
@@ -350,35 +361,38 @@ class MainWindow(QMainWindow):
             QUrl.fromLocalFile(paths.cache_root())))
 
     def _build_toolbar(self):
-        """Barra in alto con i comandi del progetto sempre a portata di mano."""
+        """Barra in alto: solo icone (il nome compare passando sopra col mouse)."""
         tb = QToolBar("Progetto", self)
         tb.setObjectName("toolbar_progetto")
         tb.setMovable(False)
-        tb.setIconSize(QSize(16, 16))
-        tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        st = self.style()
-        for a, icon, tip in ((self.act_new, QStyle.SP_FileIcon, "Nuovo progetto (Ctrl/Cmd+N)"),
-                             (self.act_open, QStyle.SP_DialogOpenButton, "Apri progetto (Ctrl/Cmd+O)"),
-                             (self.act_save, QStyle.SP_DialogSaveButton, "Salva progetto (Ctrl/Cmd+S)")):
-            a.setIcon(st.standardIcon(icon))
-            a.setToolTip(tip)
-            tb.addAction(a)
-        self.act_recent_tb = tb.addAction("Recenti", self.show_welcome)
-        self.act_recent_tb.setToolTip("Progetti aperti di recente")
-        tb.addSeparator()
-        self.act_undo.setIcon(st.standardIcon(QStyle.SP_ArrowBack))
-        self.act_undo.setToolTip("Annulla (Ctrl/Cmd+Z)")
-        self.act_redo.setIcon(st.standardIcon(QStyle.SP_ArrowForward))
-        self.act_redo.setToolTip("Ripeti (Ctrl/Cmd+Maiusc+Z)")
-        tb.addAction(self.act_undo)
-        tb.addAction(self.act_redo)
-        tb.addSeparator()
-        self.act_import.setToolTip("Importa clip (Ctrl/Cmd+I)")
-        self.act_export.setToolTip("Esporta il video (Ctrl/Cmd+E)")
-        tb.addAction(self.act_import)
-        tb.addAction(self.act_export)
-        tb.setStyleSheet("QToolBar { background: #1a1b1d; border: none; spacing: 4px; padding: 3px; }"
-                         "QToolButton { padding: 4px 8px; }")
+        tb.setIconSize(QSize(20, 20))
+        tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.act_recent_tb = QAction("Progetti recenti", self)
+        self.act_recent_tb.triggered.connect(lambda _=False: self.show_welcome())
+        self.act_settings_tb = QAction("Impostazioni progetto", self)
+        self.act_settings_tb.triggered.connect(lambda _=False: self.timeline_settings())
+        groups = [
+            [(self.act_new, "new", "Nuovo progetto (Ctrl/Cmd+N)"),
+             (self.act_open, "open", "Apri progetto (Ctrl/Cmd+O)"),
+             (self.act_save, "save", "Salva progetto (Ctrl/Cmd+S)"),
+             (self.act_recent_tb, "recent", "Progetti recenti (Ctrl/Cmd+Maiusc+O)")],
+            [(self.act_undo, "undo", "Annulla (Ctrl/Cmd+Z)"),
+             (self.act_redo, "redo", "Ripeti (Ctrl/Cmd+Maiusc+Z)")],
+            [(self.act_import, "import", "Importa clip (Ctrl/Cmd+I)"),
+             (self.act_export, "export", "Esporta il video (Ctrl/Cmd+E)"),
+             (self.act_settings_tb, "settings", "Impostazioni progetto: fps, risoluzione, bande nere (Ctrl/Cmd+,)")],
+        ]
+        for k, grp in enumerate(groups):
+            if k:
+                tb.addSeparator()
+            for a, ic, tip in grp:
+                a.setIcon(icons.icon(ic))
+                a.setToolTip(tip)
+                tb.addAction(a)
+        tb.setStyleSheet("QToolBar { background: #1a1b1d; border: none; spacing: 2px; padding: 3px 6px; }"
+                         "QToolButton { padding: 4px; border: none; background: transparent; }"
+                         "QToolButton:hover { background: #34363a; border-radius: 4px; }"
+                         "QToolBar::separator { background: #3a3c40; width: 1px; margin: 4px 6px; }")
         self.addToolBar(Qt.TopToolBarArea, tb)
 
     def _update_undo_state(self):
@@ -430,9 +444,7 @@ class MainWindow(QMainWindow):
         self.timeline.btn_settings.clicked.connect(self.timeline_settings)
         self.preview_combo.currentIndexChanged.connect(
             lambda i: self.set_quality(self.preview_combo.itemData(i)) if i >= 0 else None)
-        self.inspector.project_bars_changed.connect(self._project_bars)
-        self.timeline.btn_effects.clicked.connect(lambda: self.show_tab(0))
-        self.timeline.btn_color.clicked.connect(lambda: self.show_tab(1))
+        self.timeline.btn_box.clicked.connect(self.add_box)
         cp.edit.connect(self._grade_edit)
         cp.target_changed.connect(lambda k: self.refresh_color_panel())
         cp.action.connect(self._color_action)
@@ -682,13 +694,18 @@ class MainWindow(QMainWindow):
             return
         t = self.engine.source_positions.get("__timeline__", 0.0) if self.engine.mode == "source" \
             else self.engine.position
-        self.add_refs_at(ids, t, 0, 0)
+        self.add_refs_at(ids, t, 0, None)
 
-    def add_refs_at(self, ids, t, vtrack, atrack):
+    def add_refs_at(self, ids, t, vtrack, atrack, audio_row=False):
+        """atrack None = automatico (musica sull'ultima traccia audio, il resto su A1).
+        audio_row: rilasciato su una traccia audio (allora si usa quella)."""
         self.project.checkpoint()
         placed = []
         for rid in ids:
-            its = self.project.add_to_timeline(rid, t, vtrack, atrack)
+            at = atrack
+            if at is None or (self.project.is_audio_only(rid) and not audio_row):
+                at = self.project.music_track() if self.project.is_audio_only(rid) else (atrack or 0)
+            its = self.project.add_to_timeline(rid, t, vtrack, at)
             if its:
                 t = max(self.project.item_end(i) for i in its)
             placed += its
@@ -713,6 +730,8 @@ class MainWindow(QMainWindow):
             return self.import_dialog()
         if action == "import_folder":
             return self.import_folder_dialog()
+        if action == "import_audio":
+            return self.import_audio_dialog()
         if action == "append":
             self.bin.select(ids)
             return self.append_selected()
@@ -914,10 +933,10 @@ class MainWindow(QMainWindow):
                 self.selected_ref = ref
             return
         elif action == "open_effects":
-            self.show_tab(0)
+            self.show_tab(TAB_EFFECTS)
             return
         elif action == "open_color":
-            self.show_tab(1)
+            self.show_tab(TAB_COLOR)
             return
         elif action == "add_video_track":
             pr.checkpoint()
@@ -965,22 +984,10 @@ class MainWindow(QMainWindow):
         self._after_timeline_edit()
         self.statusBar().showMessage(f"Progetto: {vals['width']}×{vals['height']}, {vals['fps']:g} fps", 4000)
 
-    def _project_bars(self, value, begin):
-        st = self.project.data["settings"]
-        if begin:
-            self._grade_begin("project_bars")
-        st["bars"] = float(value)
-        self._mark_dirty()
-        self.engine.refresh()
-
     def show_tab(self, index):
         """Mostra il pannello Effetti (0) o Colore (1), anche se era stato chiuso o staccato."""
-        dock = self.right_tabs.parentWidget()
-        while dock is not None and not isinstance(dock, QDockWidget):
-            dock = dock.parentWidget()
-        if dock is not None:
-            dock.show()
-            dock.raise_()
+        self.side_dock.show()
+        self.side_dock.raise_()
         self.right_tabs.setCurrentIndex(index)
 
     def _update_settings_label(self):
@@ -988,7 +995,6 @@ class MainWindow(QMainWindow):
         self.timeline.btn_settings.setText(f"Progetto: {float(st['fps']):g} fps · {st['width']}×{st['height']}")
         if getattr(self, "_preview_for", None) != self.project.size:
             self._fill_preview_combo()
-        self.inspector.set_project_bars(float(st.get("bars", 0.0) or 0.0), st["width"], st["height"])
 
     # ======================================================= proprietà pezzi
     def _sel_items(self, kind=None):
@@ -999,7 +1005,7 @@ class MainWindow(QMainWindow):
         return sorted(its, key=lambda i: (i["start"], i["track"]))
 
     def _primary_item(self):
-        for k in ("video", "text", "audio"):
+        for k in ("video", "text", "shape", "audio"):
             its = self._sel_items(k)
             if its:
                 return its[0], len(its)
@@ -1009,7 +1015,7 @@ class MainWindow(QMainWindow):
         it, n = self._primary_item()
         dur = self.project.item_dur(it) if it else None
         self.inspector.show_item(it, n, dur)
-        texts = self._sel_items("text")
+        texts = self._sel_items("text") + self._sel_items("shape")
         self.viewer.overlay.highlight = texts[0]["id"] if texts else None
         self.viewer.overlay.update()
 
@@ -1044,18 +1050,14 @@ class MainWindow(QMainWindow):
     def _inspector_action(self, act):
         if act == "add_text":
             return self.add_text()
+        if act == "add_box":
+            return self.add_box()
         pr = self.project
         its = self._sel_items("video")
         if not its:
             return
         self.project.checkpoint()
         W, H = pr.size
-        if act.startswith("bars:"):
-            lab = act[5:]
-            ratio = float(lab.split(":")[0]) if ":" in lab else 0.0
-            for it in its:
-                it["bars"] = bars_for_ratio(ratio, W, H)
-            return self._after_timeline_edit()
         for it in its:
             if act == "center":
                 it["pos_x"] = 0.0
@@ -1071,22 +1073,26 @@ class MainWindow(QMainWindow):
                 it["pos_x"] = it["pos_y"] = 0.0
         self._after_timeline_edit()
 
-    def add_text(self):
+    def add_box(self):
+        self.add_text(kind="shape")
+
+    def add_text(self, kind="text"):
         pr = self.project
         if self.engine.mode == "timeline":
             t = self.engine.position
         else:
             t = self.engine.source_positions.get("__timeline__", 0.0)
         pr.checkpoint()
-        it = pr.add_text(t)
+        it = pr.add_shape(t) if kind == "shape" else pr.add_text(t)
         if self.engine.mode != "timeline":
             self.set_viewer_mode("timeline")
         self.timeline.view.set_selection([it["id"]], emit=False)
         self.active_panel = "timeline"
-        self.right_tabs.setCurrentIndex(0)
+        self.right_tabs.setCurrentIndex(TAB_EFFECTS)
         self._after_timeline_edit()
-        self.inspector.text_edit.setFocus()
-        self.inspector.text_edit.selectAll()
+        if kind == "text":
+            self.inspector.text_edit.setFocus()
+            self.inspector.text_edit.selectAll()
 
     # trascinamento nel visore: sposta scritte e inquadratura
     def _viewer_drag_begin(self, nx, ny):
@@ -1114,7 +1120,7 @@ class MainWindow(QMainWindow):
                 self.timeline.view.set_selection(pr.expand_linked([target["id"]]))
             else:
                 self.timeline.view.set_selection([target["id"]])
-        self.right_tabs.setCurrentIndex(0)
+        self.right_tabs.setCurrentIndex(TAB_EFFECTS)
         pr.checkpoint()
         self._vdrag = (target["id"], float(target.get("pos_x", 0.0)), float(target.get("pos_y", 0.0)))
 
@@ -1125,7 +1131,7 @@ class MainWindow(QMainWindow):
         it = self.project.item(iid)
         if it is None:
             return
-        if it["kind"] == "text":
+        if it["kind"] in ("text", "shape"):
             it["pos_x"] = min(1.0, max(0.0, ox + dx))
             it["pos_y"] = min(1.0, max(0.0, oy + dy))
         else:
@@ -1305,6 +1311,14 @@ class MainWindow(QMainWindow):
                                                 f"Video e audio ({exts});;Tutti i file (*)")
         if files:
             self.cfg["last_import_dir"] = os.path.dirname(files[0])
+            self.import_paths(files)
+
+    def import_audio_dialog(self):
+        exts = " ".join("*" + e for e in sorted(media.AUDIO_EXT | {e.upper() for e in media.AUDIO_EXT}))
+        files, _ = QFileDialog.getOpenFileNames(self, "Importa musica e suoni", self.cfg.get("last_audio_dir", ""),
+                                                f"Audio ({exts});;Tutti i file (*)")
+        if files:
+            self.cfg["last_audio_dir"] = os.path.dirname(files[0])
             self.import_paths(files)
 
     def import_folder_dialog(self):

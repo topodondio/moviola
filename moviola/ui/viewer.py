@@ -12,7 +12,7 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QSurfaceFormat
 from PySide6.QtWidgets import QWidget
 
-from .text_render import draw_text, text_box
+from .text_render import draw_overlay, text_box
 
 try:
     from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -113,7 +113,7 @@ class TextOverlay(QWidget):
             p.fillRect(QRectF(fr.left(), fr.top(), fr.width(), bh), Qt.black)
             p.fillRect(QRectF(fr.left(), fr.bottom() - bh, fr.width(), bh), Qt.black)
         for item, op in self.texts:
-            draw_text(p, fr, item, op)
+            draw_overlay(p, fr, item, op)
             if item.get("id") == self.highlight:
                 p.setOpacity(1.0)
                 p.setPen(QPen(QColor(232, 163, 61), 1, Qt.DashLine))

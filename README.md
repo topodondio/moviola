@@ -5,7 +5,7 @@ Pensato per chi viene dalla fotografia: si lavora "a clip" e il colore si
 corregge con comandi fotografici (esposizione, contrasto, bilanciamento del
 bianco, curva, HSL per colore), senza nodi.
 
-> Stato: **prototipo 0.3**. Le funzioni base ci sono tutte; da collaudare
+> Stato: **prototipo 0.4**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
 ## Avvio
@@ -31,22 +31,33 @@ Se il doppio clic su Mac non funziona, da Terminale: `bash avvia_mac.command`.
 
 All'avvio compare l'elenco dei **progetti recenti** (doppio clic per
 riaprirne uno), con i pulsanti *Nuovo progetto* e *Apri altro progetto*.
-In alto c'è sempre la barra con **Nuovo, Apri, Salva, Recenti, Annulla,
-Ripeti, Importa ed Esporta**.
+In alto c'è sempre una barra di sole icone (il nome compare passandoci
+sopra col mouse): nuovo, apri, salva, recenti · annulla, ripeti · importa,
+esporta, impostazioni del progetto.
 
 ```
-┌──────────┬───────────────────────────────┬──────────┐
-│  CLIP    │  VISORE (sorgente / timeline) │  COLORE  │
-│ clip1    │                               │ bersaglio│
-│  clip1.1 │  barra della clip con le parti│ cursori  │
-│  clip1.2 │  ◀◀ ▶ ▶▶  I  O  + Crea parte  │ curva    │
-│ clip2    ├───────────────────────────────┤ HSL      │
-│  clip2.1 │  TIMELINE  V3 V2 V1 │ A1 A2 A3│          │
-└──────────┴───────────────────────────────┴──────────┘
+┌─────────────────────────┬──────────────────────────────────────┐
+│ CLIP │ EFFETTI │ COLORE │  VISORE (sorgente / timeline)        │
+├─────────────────────────┤                                      │
+│ VIDEO          + Clip   │  barra della clip con le parti       │
+│  clip1                  │  ◀◀ ▶ ▶▶  I  O  + Crea parte          │
+│   clip1.1  clip1.2      ├──────────────────────────────────────┤
+│ AUDIO · MUSICA + Audio  │  TIMELINE   V3 V2 V1  │  A1 A2 A3     │
+│  ♪ clip3                │                                      │
+└─────────────────────────┴──────────────────────────────────────┘
 ```
+
+La colonna a sinistra ha tre schede, scelte con le linguette in alto:
+**CLIP** (le clip video e, sotto, la sezione **AUDIO · MUSICA**),
+**EFFETTI** e **COLORE**.
 
 1. **Importa** le clip (Ctrl/Cmd+I, o trascina file e cartelle nella lista).
    Diventano `clip1`, `clip2`, … e restano riferimenti ai file originali.
+   I file solo audio (mp3, wav, m4a, aiff…) finiscono nella sezione
+   **AUDIO · MUSICA** («+ Audio» per importarli da lì). Si scelgono le parti
+   come per i video e in timeline vanno da soli sull'**ultima traccia audio**
+   (A3), la traccia della musica; trascinandoli su un'altra traccia audio
+   restano dove li lasci.
 2. **Scegli le parti**: seleziona una clip, scorri con J/K/L o le frecce,
    segna **I** (ingresso) e **O** (uscita), premi **Invio** (o M).
    Nasce `clip1.1`, poi `clip1.2`, … I numeri non cambiano mai, anche se
@@ -67,10 +78,9 @@ Ripeti, Importa ed Esporta**.
    Si applicano in quest'ordine (clip → pezzo → timeline). Copia/incolla con
    Ctrl/Cmd+Maiusc+C / V su più elementi selezionati (Ctrl/Cmd+clic).
    I preset si salvano dal menu Colore. Tasto `\` = prima/dopo.
-6. **Pannello Effetti** (a destra, scheda accanto a Colore; si apre anche
-   con il pulsante «Effetti» sulla timeline, con un doppio clic su un pezzo
-   o dal clic destro → «Velocità ed effetti…»): seleziona un pezzo in
-   timeline e regola
+6. **Scheda EFFETTI** (si apre anche con un doppio clic su un pezzo o dal
+   clic destro → «Velocità ed effetti…»): seleziona un pezzo in timeline e
+   regola
    - **velocità** (10–800 %, con pulsanti 25/50/100/200/400 %): il pezzo
      cambia durata e ciò che segue si sposta; l'audio collegato segue;
    - **velocità variabile (curva)**: spunta la casella e disegna la curva
@@ -79,8 +89,6 @@ Ripeti, Importa ed Esporta**.
      doppio clic lo toglie; ci sono dei modelli pronti (es. rampa lento al
      centro). La parte di clip mostrata resta la stessa, cambia il ritmo e
      quindi la durata in timeline. Tagliando il pezzo il movimento non cambia;
-   - **bande nere** sopra e sotto: altezza in % o formati pronti 2.39:1,
-     2:1, 1.85:1;
    - **inquadratura**: zoom, spostamento orizzontale/verticale, *Adatta*,
      *Riempi* (niente bande), *Centra*; oppure trascina l'immagine nel visore;
    - **dissolvenze** in entrata e uscita, da/verso **nero** o **bianco**,
@@ -91,15 +99,19 @@ Ripeti, Importa ed Esporta**.
    righe, carattere, dimensione, colore, grassetto/corsivo, allineamento,
    ombra, riquadro con opacità, durata, comparsa e scomparsa in dissolvenza.
    Si sposta trascinandola nel visore. Le scritte stanno sempre sopra al video.
+   **Riquadri colorati**: tasto **R** (o «Riquadro» sulla timeline):
+   colore, opacità, angoli arrotondati, larghezza, altezza, posizione
+   (anche trascinandolo nel visore), durata e dissolvenze; formati pronti
+   *Schermo pieno*, *Fascia in basso*, *Sotto un titolo*. Una scritta su una
+   traccia più alta finisce sopra al riquadro.
 8. **Esporta** (Ctrl/Cmd+E): MP4 H.264 o MOV ProRes 422, sempre dai file
    originali.
 
 ### Impostazioni del progetto
 
-Pulsante con fps e risoluzione sulla barra della timeline (o Ctrl/Cmd+,):
-risoluzione, **fotogrammi al secondo** e bande nere su tutto il montaggio
-(le bande su tutto il progetto si regolano anche in cima al pannello
-Effetti, sempre visibili).
+Pulsante con fps e risoluzione sulla barra della timeline, icona
+dell'ingranaggio in alto o Ctrl/Cmd+,: risoluzione, **fotogrammi al
+secondo** e **bande nere** su tutto il montaggio.
 Gli fps del progetto sono quelli dell'anteprima della timeline e del video
 esportato; le clip con fps diversi vengono adattate ripetendo o saltando
 fotogrammi. Il visore sorgente mostra invece ogni clip ai suoi fps originali.
@@ -115,7 +127,12 @@ fotogrammi. Il visore sorgente mostra invece ogni clip ai suoi fps originali.
   anche l'altro della stessa quantità; per lavorarli separati: clic destro →
   Scollega (o Alt mentre trascini).
 - **Alt**+trascina muove solo il video o solo l'audio; clic destro → scollega/collega.
-- Clic destro su un audio → Volume. Aggancio ai bordi: **N**.
+- Clic destro su un audio → Volume.
+- **Aggancio magnetico** (pulsante con la calamita, tasto **N**): spostando,
+  rifilando o trascinando clip dalla lista, i bordi si attaccano a quelli
+  delle altre clip **su qualsiasi traccia**, alla testina e all'inizio; una
+  linea arancione tratteggiata mostra il punto. Tieni premuto **Maiusc**
+  mentre trascini per sospenderlo.
 - Rotella: scorre · Ctrl/Cmd+rotella o **+/−**: zoom · **Maiusc+Z**: adatta.
 
 Tutte le scorciatoie: menu Aiuto → Scorciatoie (F1).

@@ -31,6 +31,17 @@ TEXT_DEFAULTS = {"text": "Titolo", "font": "", "size": 8.0, "color": "#ffffff", 
                  "box_color": "#000000", "box_opacity": 0.5, "fade_in": 0.5, "fade_out": 0.5, "speed": 1.0}
 
 
+SHAPE_DEFAULTS = {"color": "#000000", "opacity": 0.6, "width": 0.6, "height": 0.16, "pos_x": 0.5, "pos_y": 0.84,
+                  "radius": 0.0, "fade_in": 0.3, "fade_out": 0.3, "speed": 1.0}
+
+OVERLAYS = ("text", "shape")
+
+
+def is_overlay(it) -> bool:
+    """Scritte e riquadri: elementi disegnati sopra al video, senza file sorgente."""
+    return it.get("kind") in OVERLAYS
+
+
 def lane(it) -> str:
     """Le scritte stanno sulle tracce video."""
     return "audio" if it["kind"] == "audio" else "video"
@@ -311,7 +322,7 @@ class Project:
     @staticmethod
     def item_dur(it):
         """Durata in timeline (tiene conto della velocità)."""
-        if it["kind"] == "text":
+        if is_overlay(it):
             return it["src_out"] - it["src_in"]
         return spd.item_dur(it)
 
@@ -328,7 +339,7 @@ class Project:
         """Riduce un pezzo all'intervallo [a, b] della timeline, mantenendo
         identico il movimento (anche con la velocità a curva)."""
         s = it["start"]
-        if it["kind"] == "text":
+        if is_overlay(it):
             it["src_in"], it["src_out"] = 0.0, b - a
             it["start"] = a
             return
@@ -431,8 +442,8 @@ class Project:
             out.append(it)
         return out
 
-    def make_text(self, start, track=None, dur=4.0, **props):
-        """Scritta (titolo) sulla traccia video indicata o sulla più alta libera."""
+    def make_text(self, start, track=None, dur=4.0, kind="text", **props):
+        """Scritta (titolo) o riquadro sulla traccia video indicata o sulla più alta libera."""
         start = max(0.0, self.snap(start))
         dur = max(self.frame(), dur)
         if track is None:
@@ -446,7 +457,9 @@ class Project:
                     break
             if track is None:
                 track = self.add_track("video")
-        it = dict(TEXT_DEFAULTS, id=_uid(), kind="text", track=track, source=None, origin="Testo",
+        defaults = SHAPE_DEFAULTS if kind == "shape" else TEXT_DEFAULTS
+        it = dict(defaults, id=_uid(), kind=kind, track=track, source=None,
+                  origin="Riquadro" if kind == "shape" else "Testo",
                   start=start, src_in=0.0, src_out=dur, link=None)
         it.update(props)
         return it
@@ -456,16 +469,39 @@ class Project:
         self.place_items([it])
         return it
 
+    def add_shape(self, start, track=None, dur=4.0, **props):
+        it = self.make_text(start, track, dur, kind="shape", **props)
+        self.place_items([it])
+        return it
+
     def add_to_timeline(self, ref_id, start, vtrack=0, atrack=0):
         items = self.make_items(ref_id, start, vtrack, atrack)
         self.place_items(items)
         return items
 
-    def append_to_timeline(self, ref_ids, vtrack=0, atrack=0):
-        """Accoda una o più clip alla fine della traccia."""
-        t = max([self.item_end(i) for i in self.items
-                 if (i["kind"] == "video" and i["track"] == vtrack) or (i["kind"] == "audio" and i["track"] == atrack)],
-                default=0.0)
+    def music_track(self):
+        """Traccia per musica e suoni importati da soli: l'ultima traccia audio."""
+        return len(self.tracks("audio")) - 1
+
+    def is_audio_only(self, ref_id):
+        src, _, _ = self.range_of(ref_id)
+        return bool(src) and not src.get("has_video")
+
+    def append_to_timeline(self, ref_ids, vtrack=0, atrack=None):
+        """Accoda una o più clip alla fine delle tracce che occupano.
+        La musica (file solo audio) va sulla traccia della musica."""
+        if not ref_ids:
+            return []
+        music = all(self.is_audio_only(r) for r in ref_ids)
+        if atrack is None:
+            atrack = self.music_track() if music else 0
+        if music:
+            t = max([self.item_end(i) for i in self.items if i["kind"] == "audio" and i["track"] == atrack],
+                    default=0.0)
+        else:
+            t = max([self.item_end(i) for i in self.items
+                     if (lane(i) == "video" and i["track"] == vtrack) or (i["kind"] == "audio" and i["track"] == atrack)],
+                    default=0.0)
         placed = []
         for rid in ref_ids:
             its = self.add_to_timeline(rid, t, vtrack, atrack)
@@ -513,7 +549,7 @@ class Project:
         lo, hi = -1e18, 1e18
         for g in group:
             sp = self.speed(g)
-            text = g["kind"] == "text"
+            text = is_overlay(g)
             src = self.source(g["source"]) if not text else None
             length = self.item_dur(g)
             if edge == "left":
@@ -530,7 +566,7 @@ class Project:
             sp = self.speed(g)
             if edge == "left":
                 g["start"] += d
-                if g["kind"] == "text":
+                if is_overlay(g):
                     g["src_out"] -= d
                 else:
                     g["src_in"] += d * sp
@@ -623,7 +659,7 @@ class Project:
         seen = set()
         for iid in ids:
             it = self.item(iid)
-            if it is None or it["kind"] == "text" or it["id"] in seen:
+            if it is None or is_overlay(it) or it["id"] in seen:
                 continue
             g = self.linked(it)
             seen.update(i["id"] for i in g)
@@ -665,14 +701,14 @@ class Project:
     def texts_at(self, t):
         """Scritte visibili al tempo t (dal basso verso l'alto)."""
         tracks = self.tracks("video")
-        out = [it for it in self.items if it["kind"] == "text" and it["track"] < len(tracks)
+        out = [it for it in self.items if is_overlay(it) and it["track"] < len(tracks)
                and not tracks[it["track"]].get("muted")
                and it["start"] - 1e-9 <= t < self.item_end(it) - 1e-9]
         return sorted(out, key=lambda i: i["track"])
 
     def texts(self):
         tracks = self.tracks("video")
-        return [it for it in self.items if it["kind"] == "text" and it["track"] < len(tracks)
+        return [it for it in self.items if is_overlay(it) and it["track"] < len(tracks)
                 and not tracks[it["track"]].get("muted")]
 
     @staticmethod

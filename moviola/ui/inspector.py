@@ -107,7 +107,6 @@ class Inspector(QWidget):
     begin = Signal(str)
     changed = Signal(str, str, object)  # tipo pezzo ('video', 'audio', 'text'), chiave, valore
     action = Signal(str)  # 'fill', 'center', 'add_text'
-    project_bars_changed = Signal(float, bool)  # valore, inizio modifica
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -117,7 +116,6 @@ class Inspector(QWidget):
         self.title.setStyleSheet("color:#e8a33d; font-weight:600;")
         self.title.setWordWrap(True)
         outer.addWidget(self.title)
-        outer.addWidget(self._project_box())
         self.stack = QStackedWidget()
         outer.addWidget(self.stack, 1)
         self._loading = False
@@ -128,12 +126,15 @@ class Inspector(QWidget):
         empty = QWidget()
         el = QVBoxLayout(empty)
         lab = QLabel("Seleziona un pezzo nella timeline per regolarne velocità, inquadratura, "
-                     "dissolvenze o volume.\n\nPer una scritta: tasto T o il pulsante qui sotto.")
+                     "dissolvenze o volume.\n\nPer una scritta: tasto T; per un riquadro colorato: tasto R.")
         lab.setWordWrap(True)
         lab.setStyleSheet("color:#9a9a9a;")
         el.addWidget(lab)
         b = QPushButton("+ Aggiungi scritta alla testina")
         b.clicked.connect(lambda: self.action.emit("add_text"))
+        el.addWidget(b)
+        b = QPushButton("+ Aggiungi riquadro colorato alla testina")
+        b.clicked.connect(lambda: self.action.emit("add_box"))
         el.addWidget(b)
         el.addStretch(1)
         self.stack.addWidget(empty)
@@ -141,65 +142,7 @@ class Inspector(QWidget):
         self.stack.addWidget(self._scroll(self._video_page()))
         self.stack.addWidget(self._scroll(self._audio_page()))
         self.stack.addWidget(self._scroll(self._text_page()))
-
-    def _project_box(self):
-        """Effetti su tutto il progetto (sempre visibili, anche senza selezione)."""
-        from .project_settings import BARS
-
-        gb, f = _group("Tutto il progetto")
-        row = QHBoxLayout()
-        self.pbars_combo = QComboBox()
-        for lab, r in BARS:
-            self.pbars_combo.addItem(lab, r)
-        self.pbars_combo.addItem("Personalizzata", -1.0)
-        self.pbars_spin = QDoubleSpinBox()
-        self.pbars_spin.setRange(0, 40)
-        self.pbars_spin.setSingleStep(0.5)
-        self.pbars_spin.setDecimals(1)
-        self.pbars_spin.setSuffix(" %")
-        self.pbars_spin.setKeyboardTracking(False)
-        self.pbars_spin.setToolTip("Altezza di ciascuna banda, in % dell'altezza del fotogramma")
-        row.addWidget(self.pbars_combo, 1)
-        row.addWidget(self.pbars_spin)
-        f.addRow("Bande nere", row)
-        self._pwh = (1920, 1080)
-        self.pbars_combo.currentIndexChanged.connect(self._pbars_combo)
-        self.pbars_spin.valueChanged.connect(self._pbars_spin)
-        return gb
-
-    def _pbars_combo(self, i):
-        if self._loading:
-            return
-        from .project_settings import bars_for_ratio
-
-        r = self.pbars_combo.itemData(i)
-        if r is None or r < 0:
-            return
-        v = bars_for_ratio(r, *self._pwh)
-        self._loading = True
-        self.pbars_spin.setValue(v * 100)
-        self._loading = False
-        self.project_bars_changed.emit(v, True)
-
-    def _pbars_spin(self, val):
-        if self._loading:
-            return
-        self._loading = True
-        self.pbars_combo.setCurrentIndex(self.pbars_combo.count() - 1 if val > 0 else 0)
-        self._loading = False
-        self.project_bars_changed.emit(val / 100.0, True)
-
-    def set_project_bars(self, value, W, H):
-        from .project_settings import BARS, bars_for_ratio
-
-        self._pwh = (int(W), int(H))
-        self._loading = True
-        try:
-            self.pbars_spin.setValue(value * 100)
-            k = next((k for k, (_, r) in enumerate(BARS) if abs(bars_for_ratio(r, W, H) - value) < 1e-4), None)
-            self.pbars_combo.setCurrentIndex(k if k is not None else self.pbars_combo.count() - 1)
-        finally:
-            self._loading = False
+        self.stack.addWidget(self._scroll(self._shape_page()))
 
     def _scroll(self, w):
         sa = QScrollArea()
@@ -337,16 +280,6 @@ class Inspector(QWidget):
         hint.setStyleSheet("color:#808080; font-size:11px;")
         f.addRow(hint)
         lay.addWidget(gb)
-        gb, f = _group("Bande nere")
-        f.addRow("Altezza", self._slider("video", "bars", 0, 40, 0.5, 1, " %", 0, scale=100))
-        row = QHBoxLayout()
-        for lab in ("2.39:1", "2:1", "1.85:1", "Nessuna"):
-            b = QPushButton(lab)
-            b.setToolTip("Bande sopra e sotto per un formato panoramico" if lab != "Nessuna" else "")
-            b.clicked.connect(lambda _=False, a=lab: self.action.emit("bars:" + a))
-            row.addWidget(b)
-        f.addRow(row)
-        lay.addWidget(gb)
         gb, f = _group("Dissolvenze")
         cols = [("da/verso nero", "black"), ("da/verso bianco", "white")]
         row = QHBoxLayout()
@@ -445,6 +378,56 @@ class Inspector(QWidget):
         if not self._loading:
             self.begin.emit(key)
 
+    def _shape_page(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 4, 0)
+        gb, f = _group("Riquadro")
+        row = QHBoxLayout()
+        self.shape_color = ColorButton()
+        self.shape_color.picked.connect(lambda c: (self._begin("shape_color"), self._emit("shape", "color", c)))
+        row.addWidget(self.shape_color)
+        for lab, col in (("Nero", "#000000"), ("Bianco", "#ffffff")):
+            b = QPushButton(lab)
+            b.clicked.connect(lambda _=False, cc=col: (self._begin("shape_color"), self.shape_color.set_color(cc),
+                                                        self._emit("shape", "color", cc)))
+            row.addWidget(b)
+        row.addStretch(1)
+        f.addRow("Colore", row)
+        f.addRow("Opacità", self._slider("shape", "opacity", 0, 100, 1, 0, " %", 100, scale=100))
+        f.addRow("Angoli", self._slider("shape", "radius", 0, 100, 1, 0, " %", 0, scale=100))
+        lay.addWidget(gb)
+        gb, f = _group("Dimensioni e posizione")
+        f.addRow("Larghezza", self._slider("shape", "width", 1, 100, 0.5, 1, " %", 60, scale=100))
+        f.addRow("Altezza", self._slider("shape", "height", 1, 100, 0.5, 1, " %", 16, scale=100))
+        f.addRow("Orizzontale", self._slider("shape", "pos_x", 0, 100, 0.5, 1, " %", 50, scale=100))
+        f.addRow("Verticale", self._slider("shape", "pos_y", 0, 100, 0.5, 1, " %", 50, scale=100))
+        row = QHBoxLayout()
+        for lab, vals in (("Schermo pieno", (1.0, 1.0, 0.5, 0.5)), ("Fascia in basso", (1.0, 0.16, 0.5, 0.86)),
+                          ("Sotto un titolo", (0.6, 0.16, 0.5, 0.84))):
+            b = QPushButton(lab)
+            b.clicked.connect(lambda _=False, v=vals: self._shape_preset(v))
+            row.addWidget(b)
+        f.addRow(row)
+        hint = QLabel("Puoi anche trascinarlo nel visore. Per mettere una scritta sopra al riquadro,\n"
+                      "la scritta deve stare su una traccia più alta.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#808080; font-size:11px;")
+        f.addRow(hint)
+        lay.addWidget(gb)
+        gb, f = _group("Tempi")
+        f.addRow("Durata", self._spin("shape", "duration", 0.1, 600, 0.5))
+        f.addRow("Entrata (sfuma)", self._spin("shape", "fade_in", 0, 10, 0.1))
+        f.addRow("Uscita (sfuma)", self._spin("shape", "fade_out", 0, 10, 0.1))
+        lay.addWidget(gb)
+        lay.addStretch(1)
+        return w
+
+    def _shape_preset(self, vals):
+        self._begin("shape_preset")
+        for key, v in zip(("width", "height", "pos_x", "pos_y"), vals):
+            self._emit("shape", key, v)
+
     def _text_typed(self):
         if self._loading:
             return
@@ -469,9 +452,11 @@ class Inspector(QWidget):
             if kind == "text":
                 first = (item.get("text") or "").split("\n")[0]
                 name = f"Scritta «{first[:30]}»"
+            elif kind == "shape":
+                name = "Riquadro colorato"
             extra = f"  (+{count - 1} selezionati)" if count > 1 else ""
             self.title.setText(f"{name}{extra}")
-            self.stack.setCurrentIndex({"video": 1, "audio": 2, "text": 3}[kind])
+            self.stack.setCurrentIndex({"video": 1, "audio": 2, "text": 3, "shape": 4}[kind])
             for (k, key), (w, scale) in self._w.items():
                 if k != kind:
                     continue
@@ -511,5 +496,7 @@ class Inspector(QWidget):
                     self.font_combo.setCurrentFont(QFont(fam))
                 self.color_btn.set_color(item.get("color", "#ffffff"))
                 self.box_btn.set_color(item.get("box_color", "#000000"))
+            if kind == "shape":
+                self.shape_color.set_color(item.get("color", "#000000"))
         finally:
             self._loading = False

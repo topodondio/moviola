@@ -148,12 +148,66 @@ def test_curve_bars(tmp):
     print("curva e bande ok")
 
 
+def test_box_music(tmp):
+    """Riquadro colorato sopra al video (con dissolvenza) e musica sull'ultima traccia audio."""
+    a = os.path.join(tmp, "v.mp4")
+    make_clip(a, 6, "red", 440)
+    m = os.path.join(tmp, "musica.wav")
+    subprocess.run([paths.ffmpeg_exe(), "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=10",
+                    m], check=True)
+    pr = P.Project(); store = audio.AudioStore()
+    s1 = pr.add_source(a, info(6)); store.register(s1["id"], media.make_audio_cache(a))
+    s2 = pr.add_source(m, dict(info(10), has_video=False, width=0, height=0))
+    store.register(s2["id"], media.make_audio_cache(m))
+    pr.append_to_timeline(["clip1"])
+    mus = pr.append_to_timeline(["clip2"])
+    assert len(mus) == 1 and mus[0]["kind"] == "audio" and mus[0]["track"] == 2, mus
+    assert abs(mus[0]["start"]) < 1e-6  # la musica parte da zero sulla sua traccia
+    box = pr.add_shape(1.0, dur=3.0, color="#ff00ff", opacity=1.0, width=0.5, height=0.2, pos_x=0.25, pos_y=0.1,
+                       fade_in=0.0, fade_out=1.0)
+    assert box["track"] == 2 and pr.texts_at(2.0) == [box]
+    pr.split_at(2.0, [box["id"]])
+    assert len([i for i in pr.items if i["kind"] == "shape"]) == 2
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        print("PIL non installato: salto la verifica del riquadro"); return
+
+    def renderer(item, W, H, path):  # stessa geometria di text_render.shape_rect
+        im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        w, h = item["width"] * W, item["height"] * H
+        cx, cy = item["pos_x"] * W, item["pos_y"] * H
+        ImageDraw.Draw(im).rectangle([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], fill=(255, 0, 255, 255))
+        im.save(path); return True
+
+    out = os.path.join(tmp, "box.mp4")
+    cmd, wd, dur = export.build_job(pr, store, out, text_renderer=renderer)
+    err = export.run_job(cmd, wd, dur); assert err is None, err
+    assert abs(dur - 10.0) < 1e-6  # la musica allunga il montaggio
+
+    def frame(ts):
+        fr = subprocess.run([paths.ffmpeg_exe(), "-v", "error", "-ss", f"{ts}", "-i", out, "-frames:v", "1",
+                             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        return np.frombuffer(fr, np.uint8).reshape(360, 640, 3).astype(int)
+
+    def magenta_share(ts):
+        f = frame(ts)
+        return ((f[..., 0] > 200) & (f[..., 2] > 200) & (f[..., 1] < 60)).mean()
+
+    base = magenta_share(5.0)  # il video di prova ha già un po' di magenta
+    for ts, extra in ((0.5, 0.0), (1.5, 0.1), (2.5, 0.1), (3.95, 0.0)):
+        got = magenta_share(ts) - base
+        assert abs(got - extra) < 0.03, (ts, got, extra)  # riquadro = 50% × 20% del fotogramma
+    print("riquadro e musica ok")
+
+
 def main():
     test_model(); test_color()
     with tempfile.TemporaryDirectory() as t:
         test_export(t)
         test_effects(t)
         test_curve_bars(t)
+        test_box_music(t)
     print("TUTTI I TEST OK")
 
 
