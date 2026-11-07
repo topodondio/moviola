@@ -80,56 +80,104 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
     n_inputs = 0
     chains = []
     lut_cache = {}
-    for k, seg in enumerate(segs):
-        dur = seg["end"] - seg["start"]
-        it = seg["item"]
-        src = project.source(it["source"]) if it else None
-        if it is None or src is None or not os.path.exists(src["path"]):
-            chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={dur:.6f},format=rgb24,setsar=1[s{k}]")
-            continue
+
+    def black(label, dur):
+        chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={dur:.6f},format=rgb24,setsar=1[{label}]")
+
+    def clip(label, it, seg_start, dur, fades=True, extra_fade=None):
+        """Catena di un pezzo tra seg_start e seg_start+dur (tempi timeline):
+        velocità, inquadratura, colore, dissolvenze, bande. Anche fuori dal
+        pezzo (margini delle transizioni): oltre i limiti del file si tiene
+        fermo il primo/ultimo fotogramma."""
+        nonlocal n_inputs
+        src = project.source(it["source"])
+        if src is None or not os.path.exists(src["path"]):
+            black(label, dur)
+            return
+        fr = 1.0 / fps
         item_dur = project.item_dur(it)
-        off = seg["start"] - it["start"]
-        fi = min(float(it.get("fade_in", 0) or 0), item_dur)
-        fo = min(float(it.get("fade_out", 0) or 0), item_dur)
+        off = seg_start - it["start"]
+        fi = min(float(it.get("fade_in", 0) or 0), item_dur) if fades else 0.0
+        fo = min(float(it.get("fade_out", 0) or 0), item_dur) if fades else 0.0
         # le dissolvenze si calcolano dall'inizio del pezzo: se il tratto ne
         # contiene solo una parte si parte un po' prima e poi si ritaglia
         cs = off
         if fi > 0 and off < fi:
-            cs = 0.0
+            cs = min(cs, 0.0)
         if fo > 0 and off + dur > item_dur - fo:
             cs = min(cs, max(0.0, item_dur - fo))
         lead = off - cs
         idx = n_inputs
         n_inputs += 1
-        src_t = project.src_time(it, it["start"] + cs)
-        src_end = project.src_time(it, it["start"] + cs + lead + dur)
-        inputs += ["-ss", f"{src_t:.6f}", "-t", f"{src_end - src_t + 0.5:.6f}", "-i", src["path"]]
+        sdur = float(src.get("duration") or 0.0)
+        freeze = it.get("freeze") is not None
+        raw_t = float(project.src_time(it, it["start"] + cs))
+        src_t = min(max(0.0, raw_t), max(0.0, sdur - 2 * fr))
+        pre_pad = 0.0
+        if raw_t < 0 and not freeze:  # prima dell'inizio del file: primo fotogramma fermo
+            pre_pad = -raw_t / max(spd.speed_at(it, it["start"] + cs), 1e-3)
+        src_end = float(project.src_time(it, it["start"] + cs + lead + dur))
+        span = 1.0 if freeze else max(0.2, min(src_end, sdur) - src_t + 0.5)
+        inputs.extend(["-ss", f"{src_t:.6f}", "-t", f"{span:.6f}", "-i", src["path"]])
         zoom = float(it.get("zoom", 1.0) or 1.0)
         w1, h1 = _fit_size(src, W, H, zoom)
         x = (W - w1) / 2 + float(it.get("pos_x", 0.0) or 0.0) * W
         y = (H - h1) / 2 + float(it.get("pos_y", 0.0) or 0.0) * H
         grades = project.grades_for_item(it)
         key = color.grade_key(grades)
-        c = f"[{idx}:v]setpts={_retime_expr(it, src_t, cs)},fps={fps:g},scale={w1}:{h1}:flags=bicubic,setsar=1,format=rgb24"
+        if freeze:
+            c = f"[{idx}:v]trim=end_frame=1,setpts=PTS-STARTPTS,fps={fps:g}"
+        else:
+            c = f"[{idx}:v]setpts={_retime_expr(it, src_t, cs)},fps={fps:g}"
+            if pre_pad > 0:
+                c += f",tpad=start_mode=clone:start_duration={pre_pad:.6f}"
+        c += f",scale={w1}:{h1}:flags=bicubic,setsar=1,format=rgb24"
         if key != "identity":
             if key not in lut_cache:
                 name = f"lut_{len(lut_cache)}.cube"
                 color.write_cube(os.path.join(workdir, name), color.build_lut(grades, 33))
                 lut_cache[key] = name
             c += f",lut3d=file={lut_cache[key]}:interp=tetrahedral"
-        c += f",tpad=stop_mode=clone:stop_duration=2[c{k}]"
+        c += f",tpad=stop_mode=clone:stop_duration={lead + dur + 2:.3f}[c{label}]"
         chains.append(c)
-        chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={lead + dur + 0.2:.6f},format=rgb24[b{k}]")
-        f = f"[b{k}][c{k}]overlay=x={x:.2f}:y={y:.2f}:eof_action=repeat:format=rgb"
+        chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={lead + dur + 0.2:.6f},format=rgb24[b{label}]")
+        f = f"[b{label}][c{label}]overlay=x={x:.2f}:y={y:.2f}:eof_action=repeat:format=rgb"
         if fi > 0 and lead < fi:
             col = "white" if it.get("fade_in_color") == "white" else "black"
-            f += f",fade=t=in:st=0:d={fi:.6f}:color={col}"
+            f += f",fade=t=in:st={-cs:.6f}:d={fi:.6f}:color={col}"
         if fo > 0:
             col = "white" if it.get("fade_out_color") == "white" else "black"
             f += f",fade=t=out:st={item_dur - fo - cs:.6f}:d={fo:.6f}:color={col}"
+        if extra_fade:  # (in/out, colore) su tutto il tratto: passaggi dal nero/bianco
+            f += f",fade=t={extra_fade[0]}:st={lead:.6f}:d={dur:.6f}:color={extra_fade[1]}"
         f += _bars_filter(float(it.get("bars", 0.0) or 0.0), H)
-        f += f",trim=start={lead:.6f}:duration={dur:.6f},setpts=PTS-STARTPTS,format=rgb24,setsar=1[s{k}]"
+        f += f",trim=start={lead:.6f}:duration={dur:.6f},setpts=PTS-STARTPTS,format=rgb24,setsar=1[{label}]"
         chains.append(f)
+
+    for k, seg in enumerate(segs):
+        dur = seg["end"] - seg["start"]
+        it = seg["item"]
+        tr = seg.get("trans")
+        if tr is not None:
+            kind = tr["type"]
+            if kind in ("dip_black", "dip_white"):
+                col = "black" if kind == "dip_black" else "white"
+                half = tr["cut"] - seg["start"]
+                clip(f"s{k}a", tr["a"], seg["start"], half, fades=False, extra_fade=("out", col))
+                clip(f"s{k}b", tr["b"], tr["cut"], seg["end"] - tr["cut"], fades=False, extra_fade=("in", col))
+                chains.append(f"[s{k}a][s{k}b]concat=n=2:v=1:a=0,format=rgb24,setsar=1[s{k}]")
+            else:
+                clip(f"s{k}a", tr["a"], seg["start"], dur, fades=False)
+                clip(f"s{k}b", tr["b"], seg["start"], dur, fades=False)
+                xf = {"dissolve": "fade", "wipe_l": "wipeleft", "wipe_r": "wiperight",
+                      "push_l": "slideleft", "push_r": "slideright"}.get(kind, "fade")
+                chains.append(f"[s{k}a][s{k}b]xfade=transition={xf}:duration={dur:.6f}:offset=0,"
+                              f"trim=duration={dur:.6f},format=rgb24,setsar=1[s{k}]")
+            continue
+        if it is None:
+            black(f"s{k}", dur)
+            continue
+        clip(f"s{k}", it, seg["start"], dur)
 
     n = len(segs)
     chains.append("".join(f"[s{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=0[cat]")

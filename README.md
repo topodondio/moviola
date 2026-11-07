@@ -5,7 +5,7 @@ Pensato per chi viene dalla fotografia: si lavora "a clip" e il colore si
 corregge con comandi fotografici (esposizione, contrasto, bilanciamento del
 bianco, curva, HSL per colore), senza nodi.
 
-> Stato: **prototipo 0.4**. Le funzioni base ci sono tutte; da collaudare
+> Stato: **prototipo 0.5**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
 ## Avvio
@@ -89,11 +89,25 @@ La colonna a sinistra ha tre schede, scelte con le linguette in alto:
      doppio clic lo toglie; ci sono dei modelli pronti (es. rampa lento al
      centro). La parte di clip mostrata resta la stessa, cambia il ritmo e
      quindi la durata in timeline. Tagliando il pezzo il movimento non cambia;
+   - **transizione con la clip precedente** (attaccata sulla stessa traccia):
+     dissolvenza incrociata, passaggio dal nero o dal bianco, tendina e
+     scorrimento verso sinistra o destra, con durata e incrocio dell'audio.
+     È centrata sul taglio; se mancano fotogrammi prima o dopo, si tiene
+     fermo il primo o l'ultimo. Scorciatoia: **Ctrl/Cmd+T** = dissolvenza
+     incrociata; anche dal clic destro su un pezzo. In timeline la
+     transizione è un riquadro con la X sopra al taglio;
+   - **fermo immagine**: durata e «Ferma alla testina» (**Maiusc+F**): il
+     fotogramma si blocca, quello che viene dopo slitta in avanti, la musica
+     che sta già suonando continua;
    - **inquadratura**: zoom, spostamento orizzontale/verticale, *Adatta*,
      *Riempi* (niente bande), *Centra*; oppure trascina l'immagine nel visore;
    - **dissolvenze** in entrata e uscita, da/verso **nero** o **bianco**,
      anche sull'audio collegato (spunta);
-   - per i pezzi audio: volume e dissolvenze audio.
+   - per i pezzi audio: volume e dissolvenze audio. Il **volume si disegna**
+     anche direttamente sulla clip in timeline: la linea gialla è il volume;
+     clic per aggiungere un punto, trascina per alzare/abbassare (0 dB si
+     aggancia), doppio clic per togliere. I punti restano legati al suono
+     anche se sposti o rifili la clip.
 7. **Scritte**: tasto **T** (o «T Scritta» sulla timeline) aggiunge una
    scritta alla testina sulla traccia video più alta libera. Testo su più
    righe, carattere, dimensione, colore, grassetto/corsivo, allineamento,
@@ -106,6 +120,24 @@ La colonna a sinistra ha tre schede, scelte con le linguette in alto:
    traccia più alta finisce sopra al riquadro.
 8. **Esporta** (Ctrl/Cmd+E): MP4 H.264 o MOV ProRes 422, sempre dai file
    originali.
+
+### Segnaposti
+
+- **M** mette un segnaposto sulla timeline alla testina, anche durante la
+  riproduzione (comodo per battere il tempo della musica). Sul visore
+  sorgente M crea invece la parte, come Invio.
+- **Maiusc+M** mette un segnaposto **sul pezzo** selezionato (la musica, se
+  c'è): si sposta insieme al pezzo.
+- I segnaposti attirano l'aggancio magnetico e le frecce ↑/↓ ci saltano
+  sopra. Sul righello si trascinano; clic destro per nome, colore,
+  eliminazione; doppio clic per rinominare.
+
+### Salvataggio automatico e copie di sicurezza
+
+Ogni 2 minuti, se ci sono modifiche, Moviola salva una copia automatica.
+Se il programma si chiude male, alla riapertura propone di recuperarla.
+A ogni salvataggio la versione precedente del progetto viene conservata
+(le ultime 10): File → Copie di sicurezza dei progetti.
 
 ### Impostazioni del progetto
 

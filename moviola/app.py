@@ -94,7 +94,7 @@ def main():
     else:
         from PySide6.QtCore import QTimer
 
-        QTimer.singleShot(150, win.show_welcome)
+        QTimer.singleShot(150, win.startup)
     code = app.exec()
     _save_cfg(cfg_path, cfg)
     sys.exit(code)

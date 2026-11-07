@@ -82,6 +82,7 @@ def _item_chunk(data, it, a, b, rate):
         chunk = np.zeros((n, CHANNELS), dtype=np.float32)
         lo = max(i0, 0)
         chunk[lo - i0:i1 - i0] = data[lo:i1]
+        src_sec = (i0 + np.arange(n, dtype=np.float64)) / rate
     else:
         if curve:
             pos = np.asarray(spd.src_time(it, a + np.arange(n, dtype=np.float64) / rate)) * rate
@@ -98,7 +99,12 @@ def _item_chunk(data, it, a, b, rate):
         i -= lo
         chunk = block[i] * (1 - f) + block[i + 1] * f
         chunk[~valid] = 0
+        src_sec = pos / rate
     chunk = chunk.astype(np.float32) * (db_to_gain(it.get("gain_db", 0.0)) / 32768.0)
+    pts = it.get("gain_pts")
+    if pts:  # volume disegnato sulla clip (punti ancorati al tempo del file)
+        db = np.interp(src_sec, [p[0] for p in pts], [p[1] for p in pts])
+        chunk *= (10.0 ** (db / 20.0)).astype(np.float32)[:, None]
     fi = float(it.get("fade_in", 0.0) or 0.0)
     fo = float(it.get("fade_out", 0.0) or 0.0)
     if fi > 0 or fo > 0:
@@ -113,16 +119,50 @@ def _item_chunk(data, it, a, b, rate):
     return chunk
 
 
+_EXT_CACHE = {"key": None, "ext": {}}
+
+
+def _extensions(project):
+    """Allungamenti dei pezzi audio per le transizioni (in cache: il mixer viene
+    chiamato decine di volte al secondo)."""
+    key = tuple((i["id"], i["start"], i["src_in"], i["src_out"], i["track"], i.get("link"), str(i.get("trans")))
+                for i in project.items if i["kind"] in ("video", "audio"))
+    if key != _EXT_CACHE["key"]:
+        _EXT_CACHE["key"] = key
+        _EXT_CACHE["ext"] = project.audio_extensions()
+    return _EXT_CACHE["ext"]
+
+
+def _extended(it, pre, post):
+    """Copia del pezzo allungata prima/dopo, con dissolvenza sull'allungamento
+    (incrocio audio delle transizioni)."""
+    if spd.curve_points(it) is not None:
+        return it
+    sp = spd.const_speed(it)
+    e = dict(it)
+    if pre > 0:
+        e["start"] = it["start"] - pre
+        e["src_in"] = it["src_in"] - pre * sp
+        e["fade_in"] = max(float(it.get("fade_in", 0) or 0), 2 * pre)
+    if post > 0:
+        e["src_out"] = it["src_out"] + post * sp
+        e["fade_out"] = max(float(it.get("fade_out", 0) or 0), 2 * post)
+    return e
+
+
 def mix_timeline(project, store: AudioStore, t0: float, nframes: int, rate: int = RATE) -> np.ndarray:
     """Mixa tutte le tracce audio non mute a partire dal tempo t0."""
     out = np.zeros((nframes, CHANNELS), dtype=np.float32)
     t1 = t0 + nframes / rate
     tracks = project.tracks("audio")
+    ext = _extensions(project)
     for it in project.items:
         if it["kind"] != "audio":
             continue
         if it["track"] >= len(tracks) or tracks[it["track"]].get("muted"):
             continue
+        if it["id"] in ext:
+            it = _extended(it, *ext[it["id"]])
         s = it["start"]
         e = s + spd.item_dur(it)
         if e <= t0 or s >= t1:

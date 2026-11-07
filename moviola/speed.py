@@ -26,6 +26,12 @@ PRESETS = {
 }
 
 
+def is_static(it) -> bool:
+    """Scritte, riquadri e fermi immagine: la durata è libera (src_out - src_in)
+    e non scorre nessun file."""
+    return it.get("kind") in ("text", "shape") or it.get("freeze") is not None
+
+
 def curve_points(it):
     pts = it.get("speed_curve")
     if pts and len(pts) >= 2:
@@ -61,6 +67,8 @@ def const_speed(it) -> float:
 
 
 def mean_speed(it) -> float:
+    if is_static(it):
+        return 1.0
     pts = curve_points(it)
     if pts is None:
         return const_speed(it)
@@ -68,11 +76,16 @@ def mean_speed(it) -> float:
 
 
 def item_dur(it) -> float:
+    if is_static(it):
+        return it["src_out"] - it["src_in"]
     return (it["src_out"] - it["src_in"]) / mean_speed(it)
 
 
 def src_time(it, t):
     """Tempo sorgente al tempo t della timeline (t può essere un array)."""
+    if it.get("freeze") is not None:
+        f = float(it["freeze"])
+        return np.full(np.shape(t), f) if isinstance(t, np.ndarray) else f
     pts = curve_points(it)
     if pts is None:
         return it["src_in"] + (np.asarray(t) - it["start"]) * const_speed(it) if isinstance(t, np.ndarray) \
@@ -86,6 +99,19 @@ def src_time(it, t):
     extra = np.where(u < 0, u * vk[0], np.where(u > 1, (u - 1) * vk[-1], 0.0))
     res = it["src_in"] + T * (base + extra)
     return float(res) if np.ndim(res) == 0 else res
+
+
+def tl_time(it, s):
+    """Inverso di src_time: tempo in timeline in cui si vede il tempo sorgente s."""
+    if is_static(it):
+        return it["start"]
+    pts = curve_points(it)
+    if pts is None:
+        return it["start"] + (s - it["src_in"]) / const_speed(it)
+    knots = inverse_knots(it)
+    ss = [k[0] for k in knots]
+    xs = [k[1] for k in knots]
+    return it["start"] + float(np.interp(s - it["src_in"], ss, xs))
 
 
 def speed_at(it, t) -> float:

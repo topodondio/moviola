@@ -40,6 +40,9 @@ E: accoda alla timeline · F9: inserisci alla testina della timeline<br><br>
 <b>Timeline</b><br>
 B: taglia alla testina · Canc: elimina · Maiusc+Canc: elimina e chiudi lo spazio<br>
 N: aggancio magnetico on/off (Maiusc mentre trascini lo sospende) · + / −: zoom · Maiusc+Z: adatta · Alt+trascina: muovi solo video o solo audio<br>
+M: segnaposto alla testina (anche mentre suona, per i battiti) · Maiusc+M: segnaposto sul pezzo<br>
+Ctrl/Cmd+T: dissolvenza incrociata con la clip precedente · Maiusc+F: fermo immagine alla testina<br>
+Volume disegnato: clic sulla linea gialla di una clip audio, trascina il punto, doppio clic per toglierlo<br>
 T: aggiungi una scritta · R: aggiungi un riquadro colorato · trascina nel visore: sposta scritta, riquadro o inquadratura<br>
 Ctrl/Cmd+clic: selezione multipla · Ctrl/Cmd+A: seleziona tutto<br><br>
 <b>Colore</b><br>
@@ -82,6 +85,10 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._build_toolbar()
         self._connect()
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.setInterval(self.AUTOSAVE_SECONDS * 1000)
+        self.autosave_timer.timeout.connect(self._autosave)
+        self.autosave_timer.start()
         self.set_viewer_mode("timeline", force=True)
         self.refresh_all()
         if self.engine.player.error:
@@ -253,6 +260,8 @@ class MainWindow(QMainWindow):
         self.act_new = act(m, "Nuovo progetto", self.new_project, "Ctrl+N")
         self.act_open = act(m, "Apri progetto…", self.open_project, "Ctrl+O")
         act(m, "Progetti recenti…", self.show_welcome, "Ctrl+Shift+O")
+        act(m, "Copie di sicurezza dei progetti…", lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(paths.cache_dir("copie_di_sicurezza"))))
         self.recent_menu = m.addMenu("Apri recente")
         self._fill_recent()
         self.act_save = act(m, "Salva", self.save, "Ctrl+S")
@@ -279,7 +288,7 @@ class MainWindow(QMainWindow):
         act(m, "Uscita", self.mark_out, "O")
         act(m, "Vai all'ingresso", lambda: self.goto_mark(0), "Shift+I")
         act(m, "Vai all'uscita", lambda: self.goto_mark(1), "Shift+O")
-        act(m, "Crea parte dai segni", self.create_subclip, ["Return", "Enter", "M"])
+        act(m, "Crea parte dai segni", self.create_subclip, ["Return", "Enter"])
         act(m, "Duplica parte", lambda: self.bin_action("duplicate", self.bin.selected_ids()), "Ctrl+D")
         act(m, "Rinomina", lambda: self.bin_action("rename", self.bin.selected_ids()[:1]), "F2")
         act(m, "Accoda alla timeline", self.append_selected, "E")
@@ -311,6 +320,14 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         act(m, "Aggiungi scritta alla testina", self.add_text, "T")
         act(m, "Aggiungi riquadro colorato alla testina", self.add_box, "R")
+        act(m, "Fermo immagine alla testina", lambda: self.freeze_at_playhead(), "Shift+F")
+        act(m, "Dissolvenza incrociata sui pezzi selezionati", lambda: self.timeline_action(
+            "transition:dissolve", list(self.timeline.view.selection)), "Ctrl+T")
+        sm = m.addMenu("Segnaposti")
+        act(sm, "Aggiungi segnaposto alla testina (sorgente: crea parte)", self.marker_or_part, "M")
+        act(sm, "Segnaposto sul pezzo selezionato", lambda: self.timeline_action(
+            "item_marker", list(self.timeline.view.selection)), "Shift+M")
+        act(sm, "Elimina tutti i segnaposti", lambda: self.timeline_action("delete_all_markers", []))
         m.addSeparator()
         act(m, "Aggiungi traccia video", lambda: self.timeline_action("add_video_track", []))
         act(m, "Aggiungi traccia audio", lambda: self.timeline_action("add_audio_track", []))
@@ -932,6 +949,65 @@ class MainWindow(QMainWindow):
                 self.bin.select([ref])
                 self.selected_ref = ref
             return
+        elif action.startswith("transition:"):
+            kind = action.split(":", 1)[1] or None
+            vids = self._video_items(ids)
+            if not vids:
+                return
+            pr.checkpoint()
+            dur = self.inspector.tr_dur.value()
+            pr.set_transition([i["id"] for i in vids], kind, dur, self.inspector.tr_audio.isChecked())
+            missing = [i for i in vids if kind and pr._prev_adjacent(i) is None]
+            if missing:
+                self.statusBar().showMessage("Per la transizione serve una clip attaccata prima sulla stessa "
+                                             "traccia (usa l'aggancio magnetico).", 6000)
+        elif action == "freeze":
+            return self.freeze_at_playhead(ids)
+        elif action == "item_marker":
+            its = [pr.item(i) for i in ids if pr.item(i)]
+            its = [i for i in its if i["start"] - 1e-6 <= tpos <= pr.item_end(i) + 1e-6]
+            if not its:
+                self.statusBar().showMessage("Porta la testina sopra al pezzo selezionato.", 4000)
+                return
+            pr.checkpoint()
+            pick = next((i for i in its if i["kind"] == "audio"), its[0])  # prima la musica
+            pr.add_item_marker(pick["id"], tpos)
+        elif action == "clear_item_markers":
+            pr.checkpoint()
+            for i in ids:
+                if pr.item(i):
+                    pr.item(i).pop("markers", None)
+        elif action == "clear_gain":
+            pr.checkpoint()
+            for i in ids:
+                if pr.item(i):
+                    pr.item(i).pop("gain_pts", None)
+        elif action == "add_marker_at":
+            pr.checkpoint()
+            pr.add_marker(float(ids[0]))
+        elif action == "rename_marker":
+            mk = pr.marker(ids[0])
+            if mk is None:
+                return
+            text, ok = QInputDialog.getText(self, "Segnaposto", "Nome del segnaposto:", text=mk.get("label", ""))
+            if not ok:
+                return
+            pr.checkpoint()
+            mk["label"] = text.strip()
+        elif action == "color_marker":
+            mk = pr.marker(ids[0])
+            if mk is None:
+                return
+            pr.checkpoint()
+            mk["color"] = ids[1]
+        elif action == "delete_marker":
+            pr.checkpoint()
+            pr.delete_marker(ids[0])
+        elif action == "delete_all_markers":
+            if not pr.markers:
+                return
+            pr.checkpoint()
+            pr.data["markers"] = []
         elif action == "open_effects":
             self.show_tab(TAB_EFFECTS)
             return
@@ -1015,6 +1091,15 @@ class MainWindow(QMainWindow):
         it, n = self._primary_item()
         dur = self.project.item_dur(it) if it else None
         self.inspector.show_item(it, n, dur)
+        if it is not None and it["kind"] == "video":
+            prev = self.project._prev_adjacent(it)
+            if prev is None:
+                info = ("Nessuna clip attaccata prima sulla stessa traccia: avvicinala con l'aggancio "
+                        "magnetico, oppure usa le dissolvenze da nero/bianco qui sotto.")
+            else:
+                info = (f"Con {prev.get('origin') or prev['source']}. La transizione è centrata sul taglio: "
+                        "se prima o dopo mancano fotogrammi, si tiene fermo il primo o l'ultimo.")
+            self.inspector.set_transition_info(info)
         texts = self._sel_items("text") + self._sel_items("shape")
         self.viewer.overlay.highlight = texts[0]["id"] if texts else None
         self.viewer.overlay.update()
@@ -1026,6 +1111,11 @@ class MainWindow(QMainWindow):
             return
         if key == "speed":
             pr.set_speed([i["id"] for i in its], value)
+        elif key == "trans":
+            if value:
+                pr.set_transition([i["id"] for i in its], value["type"], value["dur"], value["audio"])
+            else:
+                pr.set_transition([i["id"] for i in its], None)
         elif key == "speed_curve":
             pr.set_speed_curve([i["id"] for i in its], value)
         elif key == "duration":
@@ -1052,6 +1142,10 @@ class MainWindow(QMainWindow):
             return self.add_text()
         if act == "add_box":
             return self.add_box()
+        if act.startswith("freeze:"):
+            return self.freeze_at_playhead(dur=float(act.split(":", 1)[1]))
+        if act == "clear_gain":
+            return self.timeline_action("clear_gain", [i["id"] for i in self._sel_items("audio")])
         pr = self.project
         its = self._sel_items("video")
         if not its:
@@ -1072,6 +1166,39 @@ class MainWindow(QMainWindow):
                 it["zoom"] = max(W / sw, H / sh) / min(W / sw, H / sh)
                 it["pos_x"] = it["pos_y"] = 0.0
         self._after_timeline_edit()
+
+    def marker_or_part(self):
+        """Tasto M: sul visore sorgente crea la parte, in timeline mette un segnaposto
+        (anche durante la riproduzione, per segnare i battiti della musica)."""
+        if self.engine.mode == "source":
+            return self.create_subclip()
+        self.project.checkpoint()
+        m = self.project.add_marker(self.engine.position)
+        self.timeline.view.update()
+        self._mark_dirty()
+        self.statusBar().showMessage(f"Segnaposto a {tc(m['t'], self.project.fps)}", 1500)
+
+    def freeze_at_playhead(self, ids=None, dur=None):
+        pr = self.project
+        t = self.engine.position if self.engine.mode == "timeline" else \
+            self.engine.source_positions.get("__timeline__", 0.0)
+        cand = self._video_items(ids if ids is not None else list(self.timeline.view.selection))
+        cand = [i for i in cand if i.get("freeze") is None and i["start"] - 1e-6 <= t < pr.item_end(i) - 1e-6]
+        if not cand:
+            top = pr.video_item_at(t)
+            cand = [top] if top is not None and top.get("freeze") is None else []
+        if not cand:
+            self.statusBar().showMessage("Porta la testina sopra a una clip video per fermare l'immagine.", 4000)
+            return
+        dur = self.inspector.freeze_dur.value() if dur is None else dur
+        pr.checkpoint()
+        fr = pr.insert_freeze(cand[0]["id"], t, dur)
+        if fr is None:
+            pr.drop_checkpoint()
+            return
+        self.timeline.view.set_selection([fr["id"]], emit=False)
+        self._after_timeline_edit()
+        self.statusBar().showMessage(f"Fermo immagine di {dur:g} s inserito.", 3000)
 
     def add_box(self):
         self.add_text(kind="shape")
@@ -1506,23 +1633,30 @@ class MainWindow(QMainWindow):
     def new_project(self):
         if not self._confirm_discard():
             return
+        self._clear_autosave()
         self.project = Project()
         self._reset_state()
         self.refresh_all([])
 
-    def open_project(self, path=None):
-        if not self._confirm_discard():
-            return
-        if not path:
+    def open_project(self, path=None, recover_from=None):
+        """recover_from: file di autosalvataggio da cui ripartire (dopo una
+        chiusura anomala); il progetto resta associato a path."""
+        if recover_from is None:
+            if not self._confirm_discard():
+                return
+            self._clear_autosave()
+        if not path and recover_from is None:
             path, _ = QFileDialog.getOpenFileName(self, "Apri progetto", self.cfg.get("last_project_dir", ""),
                                                   "Progetto Moviola (*.moviola)")
-        if not path:
-            return
+            if not path:
+                return
         try:
-            pr = Project.load(path)
+            pr = Project.load(recover_from or path)
         except Exception as e:
             QMessageBox.warning(self, "Impossibile aprire", str(e))
             return
+        pr.path = path or None
+        pr.dirty = recover_from is not None
         self.project = pr
         self._reset_state()
         for src in pr.sources:
@@ -1531,7 +1665,8 @@ class MainWindow(QMainWindow):
                 self.store.register(src["id"], raw)
             self.start_source_jobs(src)
         self.act_proxy.setChecked(pr.data.get("use_proxies", True))
-        self._remember_recent(path)
+        if path:
+            self._remember_recent(path)
         self.refresh_all([])
         self.timeline.view.zoom_fit()
         missing = pr.missing_sources()
@@ -1545,7 +1680,9 @@ class MainWindow(QMainWindow):
         if not self.project.path:
             return self.save_as()
         try:
+            self._backup_before_save(self.project.path)
             self.project.save()
+            self._clear_autosave()
         except Exception as e:
             QMessageBox.warning(self, "Salvataggio non riuscito", str(e))
             return False
@@ -1553,6 +1690,78 @@ class MainWindow(QMainWindow):
         self._update_title()
         self.statusBar().showMessage("Progetto salvato.", 3000)
         return True
+
+    # ------------------------------------------- autosalvataggio e copie
+    AUTOSAVE_SECONDS = 120
+    BACKUPS_KEPT = 10
+
+    def _autosave_path(self):
+        import hashlib
+
+        base = os.path.splitext(os.path.basename(self.project.path))[0] if self.project.path else "senza_titolo"
+        key = hashlib.sha1((self.project.path or f"nuovo-{id(self.project)}").encode()).hexdigest()[:8]
+        return os.path.join(paths.cache_dir("autosalvataggi"), f"{base}_{key}.moviola")
+
+    def _autosave(self):
+        pr = self.project
+        if not pr.dirty or not (pr.sources or pr.items):
+            return
+        try:
+            target = self._autosave_path()
+            tmp = target + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(pr.data, f, ensure_ascii=False)
+            os.replace(tmp, target)
+            self.cfg["autosave"] = {"file": target, "project": pr.path, "time": time.time()}
+            with open(paths.config_path(), "w", encoding="utf-8") as f:
+                json.dump(self.cfg, f, indent=1)
+            self.statusBar().showMessage("Salvataggio automatico eseguito.", 2000)
+        except Exception as e:
+            self.statusBar().showMessage(f"Salvataggio automatico non riuscito: {e}", 5000)
+
+    def _clear_autosave(self):
+        info = self.cfg.pop("autosave", None)
+        if info and info.get("file"):
+            try:
+                os.remove(info["file"])
+            except OSError:
+                pass
+
+    def _backup_before_save(self, path):
+        """Prima di sovrascrivere il progetto ne tiene una copia (le ultime 10)."""
+        import shutil
+
+        if not os.path.exists(path):
+            return
+        try:
+            d = paths.cache_dir("copie_di_sicurezza")
+            base = os.path.splitext(os.path.basename(path))[0]
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            shutil.copy2(path, os.path.join(d, f"{base}_{stamp}.moviola"))
+            olds = sorted(f for f in os.listdir(d) if f.startswith(base + "_") and f.endswith(".moviola"))
+            for f in olds[:-self.BACKUPS_KEPT]:
+                os.remove(os.path.join(d, f))
+        except Exception:
+            pass
+
+    def startup(self):
+        """All'avvio: se l'ultima volta Moviola non si è chiusa bene propone il
+        recupero, altrimenti mostra i progetti recenti."""
+        info = self.cfg.get("autosave")
+        if info and info.get("file") and os.path.exists(info["file"]):
+            name = os.path.basename(info["project"]) if info.get("project") else "un progetto non salvato"
+            when = time.strftime("%d/%m alle %H:%M", time.localtime(info.get("time", time.time())))
+            r = QMessageBox.question(
+                self, "Recupero progetto",
+                f"L'ultima volta Moviola non si è chiusa normalmente.\n\n"
+                f"C'è un salvataggio automatico di {name} del {when}.\nVuoi recuperarlo?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            if r == QMessageBox.Yes:
+                self.open_project(info.get("project"), recover_from=info["file"])
+                self.statusBar().showMessage("Progetto recuperato: salvalo per confermare le modifiche.", 8000)
+                return
+            self._clear_autosave()
+        self.show_welcome()
 
     def save_as(self):
         start = self.project.path or os.path.join(self.cfg.get("last_project_dir", os.path.expanduser("~")),
@@ -1652,6 +1861,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             e.ignore()
             return
+        self._clear_autosave()  # chiusura regolare: niente da recuperare
         self.engine.shutdown()
         self.jobs.shutdown()
         self.cfg["geometry"] = bytes(self.saveGeometry().toHex()).decode()

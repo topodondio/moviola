@@ -4,6 +4,7 @@ nell'istante giusto (scartando quelli in ritardo: l'anteprima resta
 fluida e a sincrono anche su un computer lento)."""
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import OrderedDict, deque
@@ -25,7 +26,7 @@ def preview_height(project_h: int, quality: str) -> int:
 
 class Frame:
     __slots__ = ("t", "img", "lut", "lut_key", "graded", "hist", "label", "fade", "fade_color", "xf", "texts",
-                 "item_id", "bars")
+                 "item_id", "bars", "layers")
 
     def __init__(self, t, img=None, lut=None, lut_key="identity", graded=False, hist=None, label=""):
         self.t = t
@@ -41,6 +42,7 @@ class Frame:
         self.texts = []  # [(scritta, opacità)]
         self.item_id = None
         self.bars = (0.0, 0.0)  # bande nere: (del pezzo, generali)
+        self.layers = None  # transizioni: due immagini da comporre
 
 
 def luma_hist(img: np.ndarray, step: int = 4) -> np.ndarray:
@@ -333,37 +335,10 @@ class Engine(QObject):
                       float(pr.data["settings"].get("bars", 0.0) or 0.0))
         return f
 
-    def _render_base(self, t, still=False):
-        pr = self.get_project()
-        it = None
-        if self.mode == "timeline":
-            it = pr.video_item_at(t)
-            if it is None:
-                return Frame(t, None, label="")
-            src = pr.source(it["source"])
-            st = pr.src_time(it, t)
-            grades = pr.grades_for_item(it)
-            label = it.get("origin", it["source"])
-        else:
-            src = pr.source(self.source_id)
-            if src is None:
-                return Frame(t, None)
-            st = t
-            grades = pr.grades_for_source(src["id"])
-            label = src["id"]
-        if src is None or not src.get("has_video"):
-            return Frame(t, None, label=label)
-        h = preview_height(pr.size[1], self.quality)
-        path = self.path_for(src, h)
-        fs = self.pool.get(path)
-        if fs is None:
-            return Frame(t, None, label=label + " (file non trovato)")
-        img = fs.get(max(0.0, st), h)
-        if img is None:
-            return Frame(t, None, label=label)
-        img = np.ascontiguousarray(img)
+    def _grade(self, img, grades):
+        """(immagine, lut, chiave, già_corretta): sulla scheda video la LUT la applica
+        il visore; senza scheda video la applica qui il processore."""
         lut, key = self._lut_for(grades)
-        graded = False
         if lut is not None and self.cpu_grade:
             cl = self._cpu_cache.get(key)
             if cl is None:
@@ -371,24 +346,121 @@ class Engine(QObject):
                 self._cpu_cache[key] = cl
                 while len(self._cpu_cache) > 6:
                     self._cpu_cache.popitem(last=False)
-            img = cl.apply(img)
-            graded = True
-        fade, fcol = (0.0, (0.0, 0.0, 0.0))
-        if it is not None:
-            fade, fcol = pr.fade_at(it, t)
-            if fade > 0.001 and self.cpu_grade:
-                c = np.array(fcol, dtype=np.float32) * 255.0
-                img = (img.astype(np.float32) * (1.0 - fade) + c * fade).astype(np.uint8)
-        hist = None
-        if still:
-            if graded or lut is None:
-                hist = luma_hist(img, 4)
+            return cl.apply(img), None, "identity", True
+        return img, lut, key, False
+
+    def _item_image(self, pr, it, t, h, slot=0):
+        """Fotogramma di un pezzo della timeline al tempo t (anche appena fuori dal
+        pezzo, per i margini delle transizioni)."""
+        src = pr.source(it["source"])
+        if src is None or not src.get("has_video"):
+            return None
+        fs = self.pool.get(self.path_for(src, h), slot)
+        if fs is None:
+            return None
+        st = float(pr.src_time(it, t))
+        st = min(max(0.0, st), max(0.0, float(src.get("duration") or 0.0) - 0.5 / max(fs.fps, 1.0)))
+        img = fs.get(st, h)
+        return None if img is None else np.ascontiguousarray(img)
+
+    @staticmethod
+    def _xf(it):
+        return (float(it.get("zoom", 1.0) or 1.0), float(it.get("pos_x", 0.0) or 0.0),
+                float(it.get("pos_y", 0.0) or 0.0))
+
+    def _hist(self, img, graded, lut):
+        if graded or lut is None:
+            return luma_hist(img, 4)
+        return luma_hist(color.apply_lut_image(np.ascontiguousarray(img[::4, ::4]), lut), 1)
+
+    def _render_transition(self, pr, tr, t, h, still):
+        p = (t - tr["t0"]) / max(tr["t1"] - tr["t0"], 1e-9)
+        p = min(1.0, max(0.0, p))
+        kind = tr["type"]
+        a, b = tr["a"], tr["b"]
+        if kind in ("dip_black", "dip_white"):
+            first = t < tr["cut"]
+            it = a if first else b
+            img = self._item_image(pr, it, t, h)
+            if img is None:
+                return Frame(t, None)
+            img, lut, key, graded = self._grade(img, pr.grades_for_item(it))
+            fr = Frame(t, img, lut, key, graded, self._hist(img, graded, lut) if still else None,
+                       it.get("origin", it["source"]))
+            if first:
+                fr.fade = (t - tr["t0"]) / max(tr["cut"] - tr["t0"], 1e-9)
             else:
-                hist = luma_hist(color.apply_lut_image(np.ascontiguousarray(img[::4, ::4]), lut), 1)
-        fr = Frame(t, img, lut, key, graded, hist, label)
-        if it is not None:
-            fr.fade, fr.fade_color = fade, fcol
-            fr.xf = (float(it.get("zoom", 1.0) or 1.0), float(it.get("pos_x", 0.0) or 0.0),
-                     float(it.get("pos_y", 0.0) or 0.0))
+                fr.fade = 1.0 - (t - tr["cut"]) / max(tr["t1"] - tr["cut"], 1e-9)
+            fr.fade = min(1.0, max(0.0, fr.fade))
+            fr.fade_color = (0.0, 0.0, 0.0) if kind == "dip_black" else (1.0, 1.0, 1.0)
+            fr.xf = self._xf(it)
             fr.item_id = it["id"]
+            return fr
+        layers = []
+        for k, it in enumerate((a, b)):
+            img = self._item_image(pr, it, t, h, slot=k)
+            if img is None:
+                continue
+            img, lut, key, graded = self._grade(img, pr.grades_for_item(it))
+            ly = {"img": img, "lut": lut, "lut_key": key, "xf": self._xf(it), "alpha": 1.0, "clip": None,
+                  "dx": 0.0}
+            if k == 1:
+                if kind == "dissolve":
+                    ly["alpha"] = p
+                elif kind == "wipe_l":
+                    ly["clip"] = (1.0 - p, 1.0)
+                elif kind == "wipe_r":
+                    ly["clip"] = (0.0, p)
+                elif kind == "push_l":
+                    ly["dx"] = 1.0 - p
+                elif kind == "push_r":
+                    ly["dx"] = -(1.0 - p)
+            else:
+                if kind == "push_l":
+                    ly["dx"] = -p
+                elif kind == "push_r":
+                    ly["dx"] = p
+            layers.append(ly)
+        if not layers:
+            return Frame(t, None)
+        top = layers[-1]
+        fr = Frame(t, top["img"], top["lut"], top["lut_key"], False, None, b.get("origin", b["source"]))
+        fr.layers = layers
+        fr.item_id = (b if t >= tr["cut"] else a)["id"]
+        if still:
+            fr.hist = self._hist(top["img"], top["lut"] is None, top["lut"])
         return fr
+
+    def _render_base(self, t, still=False):
+        pr = self.get_project()
+        h = preview_height(pr.size[1], self.quality)
+        if self.mode == "timeline":
+            it = pr.video_item_at(t)
+            if it is None:
+                return Frame(t, None, label="")
+            tr = pr.transition_at(t)
+            if tr is not None:
+                return self._render_transition(pr, tr, t, h, still)
+            label = it.get("origin", it["source"])
+            img = self._item_image(pr, it, t, h)
+            if img is None:
+                src = pr.source(it["source"])
+                miss = src is not None and not os.path.exists(src["path"])
+                return Frame(t, None, label=label + (" (file non trovato)" if miss else ""))
+            img, lut, key, graded = self._grade(img, pr.grades_for_item(it))
+            fr = Frame(t, img, lut, key, graded, self._hist(img, graded, lut) if still else None, label)
+            fr.fade, fr.fade_color = pr.fade_at(it, t)
+            fr.xf = self._xf(it)
+            fr.item_id = it["id"]
+            return fr
+        src = pr.source(self.source_id)
+        if src is None or not src.get("has_video"):
+            return Frame(t, None, label=src["id"] if src else "")
+        fs = self.pool.get(self.path_for(src, h))
+        if fs is None:
+            return Frame(t, None, label=src["id"] + " (file non trovato)")
+        img = fs.get(max(0.0, t), h)
+        if img is None:
+            return Frame(t, None, label=src["id"])
+        img, lut, key, graded = self._grade(np.ascontiguousarray(img), pr.grades_for_source(src["id"]))
+        return Frame(t, img, lut, key, graded, self._hist(img, graded, lut) if still else None, src["id"])

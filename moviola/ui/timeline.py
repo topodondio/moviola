@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMenu, QPushButton, QScrollB
                                QWidget)
 
 from .. import color
+from .. import speed as spd
+from ..project import MARKER_COLORS, TRANSITIONS
 from . import icons
 from .bin_panel import MIME
 
@@ -34,6 +36,8 @@ C_VIDEO = QColor(70, 98, 138)
 C_AUDIO = QColor(52, 112, 98)
 C_TEXT = QColor(122, 84, 150)
 C_SHAPE = QColor(150, 110, 60)
+C_GAIN = QColor(240, 210, 70)
+DB_MIN, DB_MAX = -40.0, 6.0
 C_SEL = QColor(232, 163, 61)
 C_PLAY = QColor(235, 70, 60)
 
@@ -196,6 +200,7 @@ class TimelineView(QWidget):
             if not rect.intersects(QRectF(clip)):
                 continue
             self._paint_item(p, it, rect)
+        self._paint_transitions(p)
         # fantasma di trascinamento dalla lista clip
         if self._ghost:
             p.setPen(QPen(C_SEL, 1, Qt.DashLine))
@@ -230,6 +235,7 @@ class TimelineView(QWidget):
         # righello
         p.fillRect(QRectF(0, 0, self.width(), RULER), QColor(22, 23, 25))
         self._paint_ruler(p, fps)
+        self._paint_markers(p)
         p.fillRect(QRectF(0, 0, HEAD, RULER), QColor(22, 23, 25))
         p.setFont(small)
         for i, (lab, _) in enumerate((("+V", "addv"), ("+A", "adda"))):
@@ -284,6 +290,115 @@ class TimelineView(QWidget):
                         p.drawLine(QPointF(xs, RULER - 4), QPointF(xs, RULER))
             t += step
 
+    # ------------------------------------------------------- segnaposti
+    def _paint_markers(self, p):
+        f = QFont(p.font())
+        f.setPointSizeF(8)
+        p.setFont(f)
+        for m in self.project.markers:
+            x = self.x_of(m["t"])
+            if x < HEAD - 6 or x > self.width() + 6:
+                continue
+            c = QColor(m.get("color") or MARKER_COLORS[0])
+            p.setPen(QPen(QColor(c.red(), c.green(), c.blue(), 70), 1, Qt.DashLine))
+            p.drawLine(QPointF(x, RULER), QPointF(x, self.height()))
+            p.setPen(Qt.NoPen)
+            p.setBrush(c)
+            p.drawPolygon(QPolygonF([QPointF(x - 5, RULER - 11), QPointF(x + 5, RULER - 11),
+                                     QPointF(x + 5, RULER - 5), QPointF(x, RULER), QPointF(x - 5, RULER - 5)]))
+            if m.get("label"):
+                p.setPen(c)
+                p.drawText(QPointF(x + 7, RULER - 4), m["label"])
+
+    def marker_at(self, pos):
+        if pos.y() >= RULER:
+            return None
+        best = None
+        for m in self.project.markers:
+            d = abs(self.x_of(m["t"]) - pos.x())
+            if d <= 6 and (best is None or d < best[0]):
+                best = (d, m)
+        return best[1] if best else None
+
+    # ------------------------------------------------------- transizioni
+    def _paint_transitions(self, p):
+        for tr in self.project.transitions():
+            r = self.row_of("video", tr["b"]["track"])
+            if r is None:
+                continue
+            x0, x1 = self.x_of(tr["t0"]), self.x_of(tr["t1"])
+            if x1 < HEAD or x0 > self.width():
+                continue
+            box = QRectF(x0, r["y"] + 2, max(3.0, x1 - x0), r["h"] - 4)
+            p.save()
+            p.setClipRect(QRectF(HEAD, RULER, self.width() - HEAD, self.height()))
+            p.setPen(QPen(QColor(255, 255, 255, 200), 1))
+            p.setBrush(QColor(255, 255, 255, 45))
+            p.drawRect(box)
+            p.drawLine(box.topLeft(), box.bottomRight())
+            p.drawLine(box.bottomLeft(), box.topRight())
+            if box.width() > 60:
+                p.setPen(QColor(255, 255, 255))
+                p.drawText(box.adjusted(3, 0, -3, -2), Qt.AlignBottom | Qt.AlignHCenter,
+                           TRANSITIONS.get(tr["type"], "").split()[0])
+            p.restore()
+
+    # --------------------------------------------------- volume disegnato
+    def _gain_area(self, rect):
+        return rect.top() + 14, rect.bottom() - 3
+
+    def _y_of_db(self, rect, db):
+        top, bot = self._gain_area(rect)
+        u = (min(DB_MAX, max(DB_MIN, db)) - DB_MIN) / (DB_MAX - DB_MIN)
+        return bot - u * (bot - top)
+
+    def _db_of_y(self, rect, y):
+        top, bot = self._gain_area(rect)
+        u = (bot - y) / max(bot - top, 1)
+        db = DB_MIN + min(1.0, max(0.0, u)) * (DB_MAX - DB_MIN)
+        return 0.0 if abs(db) < 0.6 else round(db, 1)  # aggancio a 0 dB
+
+    def _gain_points_px(self, it, rect):
+        out = []
+        for st, db in self.project.gain_points(it):
+            out.append(QPointF(self.x_of(spd.tl_time(it, st)), self._y_of_db(rect, db)))
+        return out
+
+    def _gain_y_at(self, it, rect, x):
+        st = float(self.project.src_time(it, self.t_of(x)))
+        return self._y_of_db(rect, self.project.gain_at(it, st))
+
+    def _paint_gain(self, p, it, rect):
+        pts = self._gain_points_px(it, rect)
+        p.setPen(QPen(C_GAIN, 1.5))
+        if not pts:
+            y = self._y_of_db(rect, 0.0)
+            p.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
+            return
+        path = QPainterPath(QPointF(rect.left(), pts[0].y()))
+        for q in pts:
+            path.lineTo(q)
+        path.lineTo(QPointF(rect.right(), pts[-1].y()))
+        p.drawPath(path)
+        p.setBrush(C_GAIN)
+        p.setPen(QPen(QColor(30, 30, 30), 1))
+        for q in pts:
+            if rect.left() - 4 <= q.x() <= rect.right() + 4:
+                p.drawEllipse(q, 3.5, 3.5)
+
+    def _gain_hit(self, it, pos):
+        if it is None or it["kind"] != "audio":
+            return None
+        rect = self.item_rect(it)
+        if pos.x() - rect.left() <= EDGE or rect.right() - pos.x() <= EDGE:
+            return None
+        for k, q in enumerate(self._gain_points_px(it, rect)):
+            if abs(q.x() - pos.x()) <= 6 and abs(q.y() - pos.y()) <= 6:
+                return ("point", k)
+        if abs(self._gain_y_at(it, rect, pos.x()) - pos.y()) <= 4:
+            return ("line", None)
+        return None
+
     def _paint_item(self, p, it, rect):
         pr = self.project
         sel = it["id"] in self.selection
@@ -308,6 +423,18 @@ class TimelineView(QWidget):
                 p.drawEllipse(QPointF(rect.right() - 8, rect.top() + 7), 3.5, 3.5)
         elif kind == "audio":
             self._paint_wave(p, it, rect)
+            self._paint_gain(p, it, rect)
+        if it.get("freeze") is not None:
+            p.setPen(QColor(235, 235, 235))
+            p.drawText(rect.adjusted(5, 14, -5, 0), Qt.AlignLeft | Qt.AlignTop, "❚❚ fermo")
+        for mt in pr.item_marker_times(it):
+            x = self.x_of(mt)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(232, 163, 61))
+            p.drawPolygon(QPolygonF([QPointF(x - 4, rect.top()), QPointF(x + 4, rect.top()),
+                                     QPointF(x, rect.top() + 6)]))
+            p.setPen(QPen(QColor(232, 163, 61, 160), 1))
+            p.drawLine(QPointF(x, rect.top() + 6), QPointF(x, rect.bottom()))
         # dissolvenze: triangoli agli estremi
         for key, left in (("fade_in", True), ("fade_out", False)):
             d = float(it.get(key, 0.0) or 0.0)
@@ -426,7 +553,15 @@ class TimelineView(QWidget):
                     if self._add_btn_rect(i).contains(pos):
                         self.action.emit(act, [])
                 return
+            m = self.marker_at(pos)
+            if e.button() == Qt.RightButton:
+                self._marker_menu(m, e.globalPosition().toPoint(), self.t_of(pos.x()))
+                return
             if e.button() == Qt.LeftButton:
+                if m is not None:
+                    pr.checkpoint()
+                    self._drag = ("marker", m["id"], m["t"])
+                    return
                 self._drag = ("scrub",)
                 self.seek.emit(pr.snap(self.t_of(pos.x())))
             return
@@ -467,6 +602,21 @@ class TimelineView(QWidget):
             return
         rect = self.item_rect(it)
         origin = json.dumps(pr.data["items"])
+        gh = self._gain_hit(it, pos) if not alt else None
+        if gh is not None:
+            pr.checkpoint()
+            pts = it.setdefault("gain_pts", [])
+            if gh[0] == "line":
+                st = float(pr.src_time(it, self.t_of(pos.x())))
+                db = round(pr.gain_at(it, st), 1)
+                pts.append([round(st, 4), db])
+                pts.sort(key=lambda q: q[0])
+                k = next(i for i, q in enumerate(pts) if q[0] == round(st, 4))
+            else:
+                k = gh[1]
+            self._drag = ("gain", it["id"], k, origin)
+            self.update()
+            return
         pr.checkpoint()
         if pos.x() - rect.left() <= EDGE:
             self._drag = ("trim", it["id"], "left", origin, alt)
@@ -483,9 +633,18 @@ class TimelineView(QWidget):
         pos = e.position()
         pr = self.project
         if self._drag is None:
+            if self.marker_at(pos) is not None:
+                self.setCursor(Qt.SizeHorCursor)
+                return
             it = self.item_at(pos)
             if it is not None:
                 rect = self.item_rect(it)
+                gh = self._gain_hit(it, pos)
+                if gh is not None:
+                    self.setCursor(Qt.PointingHandCursor if gh[0] == "point" else Qt.CrossCursor)
+                    self.setToolTip("Volume: clic per aggiungere un punto, trascina, doppio clic per togliere")
+                    return
+                self.setToolTip("")
                 if pos.x() - rect.left() <= EDGE or rect.right() - pos.x() <= EDGE:
                     self.setCursor(Qt.SizeHorCursor)
                 else:
@@ -496,6 +655,27 @@ class TimelineView(QWidget):
         kind = self._drag[0]
         if kind == "scrub":
             self.seek.emit(pr.snap(self.t_of(pos.x())))
+            return
+        if kind == "marker":
+            m = pr.marker(self._drag[1])
+            if m is not None:
+                m["t"] = pr.snap(max(0.0, self._snap(self.t_of(pos.x()), exclude=())))
+                self.update()
+            return
+        if kind == "gain":
+            _, iid, k, origin = self._drag
+            it = pr.item(iid)
+            pts = (it or {}).get("gain_pts") or []
+            if not (0 <= k < len(pts)):
+                return
+            rect = self.item_rect(it)
+            st = float(pr.src_time(it, self.t_of(pos.x())))
+            lo = pts[k - 1][0] + 1e-3 if k > 0 else it["src_in"]
+            hi = pts[k + 1][0] - 1e-3 if k + 1 < len(pts) else it["src_out"]
+            pts[k] = [round(min(max(st, lo), hi), 4), self._db_of_y(rect, pos.y())]
+            self.setToolTip(f"{pts[k][1]:+.1f} dB")
+            self.changed.emit()
+            self.update()
             return
         if kind == "rubber":
             start, base = self._drag[1], self._drag[2]
@@ -544,15 +724,37 @@ class TimelineView(QWidget):
             self._rubber = None
             self.selection_changed.emit(list(self.selection))
             self.update()
-        elif d[0] in ("trim", "move"):
-            origin = d[3] if d[0] == "trim" else d[5]
+        elif d[0] == "marker":
+            m = self.project.marker(d[1])
+            if m is not None and abs(m["t"] - d[2]) < 1e-9:
+                self.project.drop_checkpoint()
+            self.project.markers.sort(key=lambda x: x["t"])
+            self.host.timeline_edit_done()
+        elif d[0] in ("trim", "move", "gain"):
+            origin = d[5] if d[0] == "move" else d[3]
             if json.dumps(self.project.data["items"]) == origin:
                 self.project.drop_checkpoint()
             self.changed.emit()
             self.host.timeline_edit_done()
 
     def mouseDoubleClickEvent(self, e):
-        it = self.item_at(e.position())
+        pos = e.position()
+        m = self.marker_at(pos)
+        if m is not None:
+            self.action.emit("rename_marker", [m["id"]])
+            return
+        it = self.item_at(pos)
+        gh = self._gain_hit(it, pos)
+        if gh is not None and gh[0] == "point":
+            pts = it.get("gain_pts") or []
+            if 0 <= gh[1] < len(pts):
+                self.project.checkpoint()
+                del pts[gh[1]]
+                self._drag = None
+                self.changed.emit()
+                self.host.timeline_edit_done()
+                self.update()
+            return
         if it is not None:
             self.action.emit("open_effects", [it["id"]])
 
@@ -656,6 +858,17 @@ class TimelineView(QWidget):
         m.addAction("Velocità ed effetti…", lambda: self.action.emit("open_effects", ids))
         if any(i["kind"] == "video" for i in its):
             m.addAction("Colore…", lambda: self.action.emit("open_color", ids))
+        if any(i["kind"] == "video" for i in its):
+            tm = m.addMenu("Transizione con la clip precedente")
+            tm.addAction("Nessuna", lambda: self.action.emit("transition:", ids))
+            for k, lab in TRANSITIONS.items():
+                tm.addAction(lab, lambda kk=k: self.action.emit("transition:" + kk, ids))
+            m.addAction("Fermo immagine alla testina\tMaiusc+F", lambda: self.action.emit("freeze", ids))
+        m.addAction("Segnaposto sul pezzo alla testina\tMaiusc+M", lambda: self.action.emit("item_marker", ids))
+        if any(i.get("markers") for i in its):
+            m.addAction("Elimina i segnaposti del pezzo", lambda: self.action.emit("clear_item_markers", ids))
+        if any(i.get("gain_pts") for i in its):
+            m.addAction("Azzera volume disegnato", lambda: self.action.emit("clear_gain", ids))
         m.addSeparator()
         m.addAction("Taglia alla testina\tB", lambda: self.action.emit("split", ids))
         m.addAction("Elimina\tCanc", lambda: self.action.emit("delete", ids))
@@ -674,6 +887,21 @@ class TimelineView(QWidget):
             m.addAction("Azzera colore del pezzo", lambda: self.action.emit("reset_grade", ids))
         m.addSeparator()
         m.addAction("Mostra nella lista clip", lambda: self.action.emit("reveal_in_bin", ids))
+        m.exec(gp)
+
+    def _marker_menu(self, mk, gp, t):
+        m = QMenu(self)
+        if mk is None:
+            m.addAction("Aggiungi segnaposto qui", lambda: self.action.emit("add_marker_at", [t]))
+        else:
+            m.addAction("Rinomina segnaposto…", lambda: self.action.emit("rename_marker", [mk["id"]]))
+            cm = m.addMenu("Colore")
+            for c, lab in zip(MARKER_COLORS, ("Arancione", "Rosso", "Verde", "Blu", "Viola", "Bianco")):
+                cm.addAction(lab, lambda cc=c: self.action.emit("color_marker", [mk["id"], cc]))
+            m.addAction("Elimina segnaposto", lambda: self.action.emit("delete_marker", [mk["id"]]))
+        if self.project.markers:
+            m.addSeparator()
+            m.addAction("Elimina tutti i segnaposti", lambda: self.action.emit("delete_all_markers", []))
         m.exec(gp)
 
     def _empty_menu(self, gp, t):

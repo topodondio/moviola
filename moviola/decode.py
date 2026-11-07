@@ -114,26 +114,28 @@ class SourcePool:
         self.lock = threading.Lock()
         self.errors: dict[str, str] = {}
 
-    def get(self, path: str) -> FrameSource | None:
-        fs = self._open.get(path)
+    def get(self, path: str, slot: int = 0) -> FrameSource | None:
+        """slot > 0 apre un secondo lettore dello stesso file (transizioni tra due
+        parti della stessa clip, senza saltare avanti e indietro)."""
+        key = (path, slot)
+        fs = self._open.get(key)
         if fs is not None:
-            self._open.move_to_end(path)
+            self._open.move_to_end(key)
             return fs
         try:
             fs = FrameSource(path)
         except Exception as e:
             self.errors[path] = str(e)
             return None
-        self._open[path] = fs
+        self._open[key] = fs
         while len(self._open) > self.size:
             _, old = self._open.popitem(last=False)
             old.close()
         return fs
 
     def drop(self, path: str):
-        fs = self._open.pop(path, None)
-        if fs:
-            fs.close()
+        for key in [k for k in self._open if k[0] == path]:
+            self._open.pop(key).close()
 
     def clear(self):
         for fs in self._open.values():

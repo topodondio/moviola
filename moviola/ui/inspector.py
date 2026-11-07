@@ -258,10 +258,73 @@ class Inspector(QWidget):
         f.addRow(note)
         return gb
 
+    def _transition_group(self):
+        """Transizione con la clip che finisce dove inizia questa (stessa traccia)."""
+        from ..project import TRANSITIONS
+
+        gb, f = _group("Transizione con la clip precedente")
+        self.tr_type = QComboBox()
+        self.tr_type.addItem("Nessuna", None)
+        for k, lab in TRANSITIONS.items():
+            self.tr_type.addItem(lab, k)
+        self.tr_dur = QDoubleSpinBox()
+        self.tr_dur.setRange(0.1, 10.0)
+        self.tr_dur.setSingleStep(0.1)
+        self.tr_dur.setDecimals(1)
+        self.tr_dur.setSuffix(" s")
+        self.tr_dur.setValue(1.0)
+        self.tr_dur.setKeyboardTracking(False)
+        self.tr_audio = QCheckBox("Incrocia anche l'audio")
+        self.tr_audio.setChecked(True)
+        row = QHBoxLayout()
+        row.addWidget(self.tr_type, 1)
+        row.addWidget(self.tr_dur)
+        f.addRow(row)
+        f.addRow(self.tr_audio)
+        self.tr_info = QLabel("")
+        self.tr_info.setWordWrap(True)
+        self.tr_info.setStyleSheet("color:#808080; font-size:11px;")
+        f.addRow(self.tr_info)
+
+        def emit_tr(*_):
+            if self._loading:
+                return
+            self._begin("trans")
+            kind = self.tr_type.currentData()
+            self._emit("video", "trans", None if not kind else
+                       {"type": kind, "dur": self.tr_dur.value(), "audio": self.tr_audio.isChecked()})
+
+        self.tr_type.currentIndexChanged.connect(emit_tr)
+        self.tr_dur.valueChanged.connect(emit_tr)
+        self.tr_audio.toggled.connect(emit_tr)
+        return gb
+
+    def _freeze_group(self):
+        gb, f = _group("Fermo immagine")
+        row = QHBoxLayout()
+        self.freeze_dur = QDoubleSpinBox()
+        self.freeze_dur.setRange(0.1, 60.0)
+        self.freeze_dur.setSingleStep(0.5)
+        self.freeze_dur.setDecimals(1)
+        self.freeze_dur.setSuffix(" s")
+        self.freeze_dur.setValue(2.0)
+        b = QPushButton("Ferma alla testina")
+        b.setToolTip("Blocca il fotogramma alla testina per la durata scelta (Maiusc+F).\n"
+                     "Ciò che viene dopo si sposta in avanti; la musica che sta già suonando continua.")
+        b.clicked.connect(lambda: self.action.emit(f"freeze:{self.freeze_dur.value()}"))
+        row.addWidget(self.freeze_dur)
+        row.addWidget(b, 1)
+        f.addRow(row)
+        return gb
+
+    def set_transition_info(self, text):
+        self.tr_info.setText(text)
+
     def _video_page(self):
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 4, 0)
+        lay.addWidget(self._transition_group())
         lay.addWidget(self._speed_group("video"))
         gb, f = _group("Inquadratura")
         f.addRow("Zoom", self._slider("video", "zoom", 10, 400, 1, 0, " %", 100, scale=100))
@@ -294,6 +357,7 @@ class Inspector(QWidget):
         self.fade_audio.setChecked(True)
         f.addRow(self.fade_audio)
         lay.addWidget(gb)
+        lay.addWidget(self._freeze_group())
         lay.addStretch(1)
         return w
 
@@ -303,6 +367,14 @@ class Inspector(QWidget):
         lay.setContentsMargins(0, 0, 4, 0)
         gb, f = _group("Volume")
         f.addRow(self._slider("audio", "gain_db", -40, 12, 0.5, 1, " dB", 0))
+        hint = QLabel("Volume disegnato: sulla clip in timeline clicca la linea gialla per aggiungere "
+                      "un punto, trascinalo per alzare o abbassare, doppio clic per toglierlo.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#808080; font-size:11px;")
+        f.addRow(hint)
+        b = QPushButton("Azzera volume disegnato")
+        b.clicked.connect(lambda: self.action.emit("clear_gain"))
+        f.addRow(b)
         lay.addWidget(gb)
         gb, f = _group("Dissolvenze audio")
         f.addRow("Entrata", self._spin("audio", "fade_in", 0, 10, 0.1))
@@ -476,6 +548,12 @@ class Inspector(QWidget):
                         w.setCurrentIndex(i)
                 elif isinstance(w, QCheckBox):
                     w.setChecked(bool(val))
+            if kind == "video":
+                tr = item.get("trans") or {}
+                i = self.tr_type.findData(tr.get("type")) if tr else 0
+                self.tr_type.setCurrentIndex(max(0, i))
+                self.tr_dur.setValue(float(tr.get("dur", self.tr_dur.value())) if tr else self.tr_dur.value())
+                self.tr_audio.setChecked(bool(tr.get("audio", True)) if tr else True)
             if kind in self._speed_ui:
                 chk, cw, dlab, const, box = self._speed_ui[kind]
                 pts = spd.curve_points(item)

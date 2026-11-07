@@ -13,6 +13,8 @@ from __future__ import annotations
 import copy
 import json
 import os
+
+import numpy as np
 import uuid
 
 from . import color
@@ -22,6 +24,18 @@ VERSION = 2
 MIN_LEN_FRAMES = 1
 
 FADE_COLORS = {"black": (0.0, 0.0, 0.0), "white": (1.0, 1.0, 1.0)}
+
+# transizioni con la clip precedente sulla stessa traccia (chiave: nome mostrato)
+TRANSITIONS = {
+    "dissolve": "Dissolvenza incrociata",
+    "dip_black": "Passaggio dal nero",
+    "dip_white": "Passaggio dal bianco",
+    "wipe_l": "Tendina verso sinistra",
+    "wipe_r": "Tendina verso destra",
+    "push_l": "Scorrimento verso sinistra",
+    "push_r": "Scorrimento verso destra",
+}
+MARKER_COLORS = ["#e8a33d", "#e05050", "#4cbf4a", "#3d8fe0", "#c060d0", "#e0e0e0"]
 
 VIDEO_DEFAULTS = {"speed": 1.0, "bars": 0.0, "zoom": 1.0, "pos_x": 0.0, "pos_y": 0.0, "fade_in": 0.0, "fade_out": 0.0,
                   "fade_in_color": "black", "fade_out_color": "black"}
@@ -65,6 +79,7 @@ def new_project_data() -> dict:
         },
         "items": [],
         "global_grade": color.default_grade(),
+        "markers": [],
         "use_proxies": True,
     }
 
@@ -148,8 +163,9 @@ class Project:
         return 1.0 / self.fps
 
     def snap(self, t: float) -> float:
+        """Al fotogramma più vicino (le metà vanno sempre in avanti)."""
         f = self.fps
-        return round(t * f) / f
+        return float(np.floor(t * f + 0.5 + 1e-9)) / f
 
     # ----------------------------------------------------------- Sorgenti
     @property
@@ -322,8 +338,6 @@ class Project:
     @staticmethod
     def item_dur(it):
         """Durata in timeline (tiene conto della velocità)."""
-        if is_overlay(it):
-            return it["src_out"] - it["src_in"]
         return spd.item_dur(it)
 
     @staticmethod
@@ -339,7 +353,7 @@ class Project:
         """Riduce un pezzo all'intervallo [a, b] della timeline, mantenendo
         identico il movimento (anche con la velocità a curva)."""
         s = it["start"]
-        if is_overlay(it):
+        if spd.is_static(it):
             it["src_in"], it["src_out"] = 0.0, b - a
             it["start"] = a
             return
@@ -391,6 +405,7 @@ class Project:
                 right = copy.deepcopy(it)
                 right["id"] = _uid()
                 right["link"] = None
+                right.pop("trans", None)
                 self._restrict(right, b, e)
                 self._restrict(it, s, a)
                 it["link"] = None
@@ -549,7 +564,7 @@ class Project:
         lo, hi = -1e18, 1e18
         for g in group:
             sp = self.speed(g)
-            text = is_overlay(g)
+            text = spd.is_static(g)
             src = self.source(g["source"]) if not text else None
             length = self.item_dur(g)
             if edge == "left":
@@ -566,7 +581,7 @@ class Project:
             sp = self.speed(g)
             if edge == "left":
                 g["start"] += d
-                if is_overlay(g):
+                if spd.is_static(g):
                     g["src_out"] -= d
                 else:
                     g["src_in"] += d * sp
@@ -591,6 +606,7 @@ class Project:
                 continue
             right = copy.deepcopy(it)
             right["id"] = _uid()
+            right.pop("trans", None)
             if it.get("link"):
                 right["link"] = new_links.setdefault(it["link"], _uid())
             self._restrict(right, t, e)
@@ -617,6 +633,9 @@ class Project:
                 for i in self.items:
                     if i["start"] >= b - 1e-6:
                         i["start"] = self.snap(i["start"] - (b - a))
+                for m in self.markers:
+                    if m["t"] >= b - 1e-6:
+                        m["t"] = self.snap(m["t"] - (b - a))
 
     def unlink(self, ids):
         for iid in ids:
@@ -659,7 +678,7 @@ class Project:
         seen = set()
         for iid in ids:
             it = self.item(iid)
-            if it is None or is_overlay(it) or it["id"] in seen:
+            if it is None or spd.is_static(it) or it["id"] in seen:
                 continue
             g = self.linked(it)
             seen.update(i["id"] for i in g)
@@ -737,7 +756,175 @@ class Project:
                 continue
             pts.add(it["start"])
             pts.add(self.item_end(it))
+            pts.update(self.item_marker_times(it))
+        pts.update(m["t"] for m in self.markers)
         return sorted(pts)
+
+    # ---------------------------------------------------------- Segnaposti
+    @property
+    def markers(self):
+        return self.data.setdefault("markers", [])
+
+    def add_marker(self, t, label="", color_=None):
+        t = self.snap(max(0.0, t))
+        for m in self.markers:
+            if abs(m["t"] - t) < 1e-6:
+                return m
+        m = {"id": _uid(), "t": t, "label": label,
+             "color": color_ or MARKER_COLORS[0]}
+        self.markers.append(m)
+        self.markers.sort(key=lambda x: x["t"])
+        return m
+
+    def marker(self, mid):
+        return next((m for m in self.markers if m["id"] == mid), None)
+
+    def delete_marker(self, mid):
+        self.data["markers"] = [m for m in self.markers if m["id"] != mid]
+
+    def add_item_marker(self, iid, t):
+        """Segnaposto attaccato a un pezzo (es. i battiti della musica): si sposta
+        con il pezzo perché è salvato come tempo nel file sorgente."""
+        it = self.item(iid)
+        if it is None or spd.is_static(it) or not (it["start"] - 1e-6 <= t <= self.item_end(it) + 1e-6):
+            return None
+        st = round(float(self.src_time(it, self.snap(t))), 6)
+        mk = it.setdefault("markers", [])
+        if all(abs(x - st) > 1e-4 for x in mk):
+            mk.append(st)
+            mk.sort()
+        return st
+
+    def item_marker_times(self, it):
+        """Tempi in timeline dei segnaposti di un pezzo (solo quelli visibili)."""
+        out = []
+        for st in it.get("markers") or []:
+            if it["src_in"] - 1e-6 <= st <= it["src_out"] + 1e-6:
+                out.append(spd.tl_time(it, st))
+        return out
+
+    # --------------------------------------------------------- Transizioni
+    def _prev_adjacent(self, it):
+        """Pezzo video che finisce esattamente dove inizia it, sulla stessa traccia."""
+        tol = 0.5 / self.fps
+        best = None
+        for o in self.items:
+            if o is it or o["kind"] != "video" or o["track"] != it["track"]:
+                continue
+            if abs(self.item_end(o) - it["start"]) <= tol:
+                best = o
+        return best
+
+    def set_transition(self, ids, kind, dur=1.0, with_audio=True):
+        """Transizione con il pezzo precedente (kind None = nessuna)."""
+        for iid in ids:
+            it = self.item(iid)
+            if it is None or it["kind"] != "video":
+                continue
+            if not kind:
+                it.pop("trans", None)
+            else:
+                it["trans"] = {"type": kind, "dur": max(1.0 / self.fps, float(dur)), "audio": bool(with_audio)}
+
+    def transitions(self):
+        """Transizioni valide: [{a, b, cut, t0, t1, type, audio}]. La transizione
+        è centrata sul taglio; servono fotogrammi di margine prima e dopo
+        (se mancano, si tiene fermo il primo/ultimo fotogramma)."""
+        out = []
+        for b in self.items:
+            tr = b.get("trans")
+            if not tr or b["kind"] != "video":
+                continue
+            a = self._prev_adjacent(b)
+            if a is None:
+                continue
+            d = min(float(tr.get("dur", 1.0)), self.item_dur(a), self.item_dur(b))
+            cut = b["start"]
+            dd = self.snap(d)
+            half = self.snap(dd / 2)
+            t0 = cut - half
+            t1 = cut + (dd - half)
+            if t1 - t0 < 1e-6:
+                continue
+            out.append({"a": a, "b": b, "cut": cut, "t0": t0, "t1": t1, "type": tr.get("type", "dissolve"),
+                        "audio": tr.get("audio", True)})
+        return out
+
+    def transition_at(self, t):
+        """Transizione visibile al tempo t (sulla traccia che si vede)."""
+        top = self.video_item_at(t)
+        if top is None:
+            return None
+        for tr in self.transitions():
+            if tr["t0"] - 1e-9 <= t < tr["t1"] - 1e-9 and (tr["a"] is top or tr["b"] is top):
+                return tr
+        return None
+
+    def transition_of(self, it):
+        for tr in self.transitions():
+            if tr["b"] is it:
+                return tr
+        return None
+
+    def audio_extensions(self):
+        """Per le transizioni con l'audio: quanto allungare (prima, dopo) i pezzi
+        audio collegati, che si incrociano con una dissolvenza."""
+        ext = {}
+        for tr in self.transitions():
+            if not tr["audio"]:
+                continue
+            half = (tr["t1"] - tr["t0"]) / 2
+            for i in self.linked(tr["a"]):
+                if i["kind"] == "audio" and abs(self.item_end(i) - tr["cut"]) < 1e-3:
+                    pre, post = ext.get(i["id"], (0.0, 0.0))
+                    ext[i["id"]] = (pre, max(post, half))
+            for i in self.linked(tr["b"]):
+                if i["kind"] == "audio" and abs(i["start"] - tr["cut"]) < 1e-3:
+                    pre, post = ext.get(i["id"], (0.0, 0.0))
+                    ext[i["id"]] = (max(pre, half), post)
+        return ext
+
+    # ------------------------------------------------------- Fermo immagine
+    def insert_freeze(self, iid, t, dur=2.0):
+        """Ferma l'immagine del pezzo video al tempo t per dur secondi: il pezzo
+        viene tagliato e tutto ciò che inizia dopo si sposta in avanti."""
+        it = self.item(iid)
+        if it is None or it["kind"] != "video":
+            return None
+        if lane(it) != "video":
+            return None
+        t = self.snap(t)
+        dur = max(self.frame(), self.snap(dur))
+        if not (it["start"] - 1e-6 <= t < self.item_end(it) - 1e-6):
+            return None
+        frozen_src = float(self.src_time(it, t))
+        self.split_at(t, [it["id"]])
+        for i in self.items:
+            if i["start"] >= t - 1e-6:
+                i["start"] = self.snap(i["start"] + dur)
+        for m in self.markers:
+            if m["t"] >= t - 1e-6:
+                m["t"] = self.snap(m["t"] + dur)
+        fr = copy.deepcopy(it)
+        for k in ("speed_curve", "trans", "markers"):
+            fr.pop(k, None)
+        fr.update(id=_uid(), link=None, start=t, src_in=0.0, src_out=dur, freeze=frozen_src, speed=1.0,
+                  fade_in=0.0, fade_out=0.0, origin=(it.get("origin") or it["source"]) + " · fermo")
+        self.items.append(fr)
+        return fr
+
+    # ------------------------------------------------------- Volume disegnato
+    @staticmethod
+    def gain_points(it):
+        return it.get("gain_pts") or []
+
+    @staticmethod
+    def gain_at(it, src_t):
+        """Volume disegnato (dB) al tempo sorgente src_t."""
+        pts = it.get("gain_pts")
+        if not pts:
+            return 0.0
+        return float(np.interp(src_t, [p[0] for p in pts], [p[1] for p in pts]))
 
     # ------------------------------------------------------------- Colore
     def grades_for_item(self, it):
@@ -752,7 +939,8 @@ class Project:
 
     def video_segments(self, start=0.0, end=None):
         """Scompone la timeline in tratti consecutivi: per ogni tratto il
-        pezzo video visibile (o None = nero). Usato dall'export."""
+        pezzo video visibile (o None = nero) e l'eventuale transizione in
+        corso (seg["trans"]). Usato dall'export."""
         end = self.timeline_end() if end is None else end
         cuts = {start, end}
         for it in self.items:
@@ -760,16 +948,30 @@ class Project:
                 for t in (it["start"], self.item_end(it)):
                     if start < t < end:
                         cuts.add(t)
+        trs = self.transitions()
+        for tr in trs:
+            for t in (tr["t0"], tr["t1"]):
+                if start < t < end:
+                    cuts.add(t)
         cuts = sorted(cuts)
         segs = []
         for a, b in zip(cuts[:-1], cuts[1:]):
             if b - a < 1e-6:
                 continue
-            it = self.video_item_at((a + b) / 2)
-            if segs and segs[-1]["item"] is it and (it is None or abs(segs[-1]["end"] - a) < 1e-6):
-                segs[-1]["end"] = b
-                continue
-            segs.append({"start": a, "end": b, "item": it})
+            mid = (a + b) / 2
+            it = self.video_item_at(mid)
+            tr = None
+            if it is not None:
+                tr = next((x for x in trs if x["t0"] - 1e-9 <= mid < x["t1"] and (x["a"] is it or x["b"] is it)),
+                          None)
+            if segs and abs(segs[-1]["end"] - a) < 1e-6:
+                last = segs[-1]
+                same = (tr is not None and last.get("trans") is tr) or \
+                       (tr is None and last.get("trans") is None and last["item"] is it)
+                if same:
+                    last["end"] = b
+                    continue
+            segs.append({"start": a, "end": b, "item": it, "trans": tr})
         return segs
 
     def missing_sources(self):

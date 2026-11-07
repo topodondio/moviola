@@ -43,6 +43,7 @@ uniform float lutSize;
 uniform int useLut;
 uniform float fadeAmt;
 uniform vec3 fadeColor;
+uniform float alpha;
 void main() {
     vec3 c = texture(img, v_uv).rgb;
     if (useLut == 1) {
@@ -50,7 +51,7 @@ void main() {
         c = texture(lut, s).rgb;
     }
     c = mix(c, fadeColor, fadeAmt);
-    outColor = vec4(c, 1.0);
+    outColor = vec4(c, alpha);
 }
 """
 
@@ -144,37 +145,66 @@ class TextOverlay(QWidget):
             self.drag_end.emit()
 
 
+class _Layer:
+    """Un'immagine da disegnare: con le transizioni ce ne sono due."""
+
+    __slots__ = ("img", "lut", "lut_key", "xf", "alpha", "clip", "dx")
+
+    def __init__(self, img, lut=None, lut_key="identity", xf=(1.0, 0.0, 0.0), alpha=1.0, clip=None, dx=0.0):
+        self.img = img
+        self.lut = lut
+        self.lut_key = lut_key
+        self.xf = xf
+        self.alpha = alpha
+        self.clip = clip  # (x0, x1) in frazioni della larghezza del fotogramma
+        self.dx = dx  # spostamento orizzontale (frazione della larghezza)
+
+
+def frame_layers(frame):
+    if getattr(frame, "layers", None):
+        return [_Layer(**ly) for ly in frame.layers]
+    if frame.img is None:
+        return []
+    return [_Layer(frame.img, frame.lut, frame.lut_key, frame.xf)]
+
+
 class _Base:
     def _init_base(self):
         self.aspect = 16 / 9
-        self._img = None
-        self._xf = (1.0, 0.0, 0.0)
+        self._layers = []
         self._fade = 0.0
         self._fade_color = (0.0, 0.0, 0.0)
         self.overlay = TextOverlay(self)
 
     def _base_frame(self, frame):
-        self._xf = frame.xf
+        self._layers = frame_layers(frame)
         self._fade = frame.fade
         self._fade_color = frame.fade_color
         self.overlay.texts = frame.texts
         self.overlay.bars = max(frame.bars) if frame.bars else 0.0
         self.overlay.update()
 
-    def _frame_rect(self, ww, wh):
+    def _project_rect(self, ww, wh):
+        return fit_rect(1, 1, ww, wh, self.aspect)
+
+    def _layer_rect(self, ly, ww, wh):
         """Rettangolo dell'immagine: adattata al formato del progetto, poi
-        zoom e spostamento del pezzo."""
-        x, y, w, h = fit_rect(1, 1, ww, wh, self.aspect)
-        if self._img is None:
-            return x, y, w, h
-        fh, fw = self._img.shape[:2]
-        fa = fw / max(fh, 1)
-        ix, iy, iw, ih = fit_rect(fw, fh, w, h, fa)
-        zoom, px, py = self._xf
+        zoom e spostamento del pezzo (e scorrimento delle transizioni)."""
+        x, y, w, h = self._project_rect(ww, wh)
+        fh, fw = ly.img.shape[:2]
+        ix, iy, iw, ih = fit_rect(fw, fh, w, h, fw / max(fh, 1))
+        zoom, px, py = ly.xf
         iw2, ih2 = iw * zoom, ih * zoom
-        cx = x + w / 2 + px * w
+        cx = x + w / 2 + (px + ly.dx) * w
         cy = y + h / 2 + py * h
         return cx - iw2 / 2, cy - ih2 / 2, iw2, ih2
+
+    def _layer_clip(self, ly, ww, wh):
+        x, y, w, h = self._project_rect(ww, wh)
+        if ly.clip is None:
+            return x, y, w, h
+        x0, x1 = ly.clip
+        return x + x0 * w, y, max(0.0, (x1 - x0) * w), h
 
     def _bg_color(self):
         """Colore delle bande (nero che sfuma verso il colore della dissolvenza)."""
@@ -190,16 +220,14 @@ if QOpenGLWidget is not None:
 
     class GlViewer(_Base, QOpenGLWidget):
         failed = Signal(str)
+        SLOTS = 2
 
         def __init__(self, parent=None):
             super().__init__(parent)
             self._init_base()
-            self._img_dirty = False
-            self._lut = None
-            self._lut_key = "identity"
-            self._lut_dirty = False
             self._ok = False
-            self._tex_size = None
+            self._slots = [{"tex": None, "lut_tex": None, "size": None, "lut_key": None, "img_id": None}
+                           for _ in range(self.SLOTS)]
             self.setMinimumSize(320, 180)
 
         def initializeGL(self):
@@ -233,17 +261,25 @@ if QOpenGLWidget is not None:
                 GL.glEnableVertexAttribArray(0)
                 GL.glVertexAttribPointer(0, 2, GL.GL_FLOAT, GL.GL_FALSE, 0, None)
                 GL.glBindVertexArray(0)
-                self.tex = GL.glGenTextures(1)
-                GL.glBindTexture(GL.GL_TEXTURE_2D, self.tex)
-                for p, v in ((GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR), (GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR),
-                             (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE), (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)):
-                    GL.glTexParameteri(GL.GL_TEXTURE_2D, p, v)
-                self.lut_tex = GL.glGenTextures(1)
-                GL.glBindTexture(GL.GL_TEXTURE_3D, self.lut_tex)
-                for p, v in ((GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR), (GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR),
-                             (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE), (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE),
-                             (GL.GL_TEXTURE_WRAP_R, GL.GL_CLAMP_TO_EDGE)):
-                    GL.glTexParameteri(GL.GL_TEXTURE_3D, p, v)
+                for sl in self._slots:
+                    sl["tex"] = GL.glGenTextures(1)
+                    GL.glBindTexture(GL.GL_TEXTURE_2D, sl["tex"])
+                    for p, v in ((GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR),
+                                 (GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR),
+                                 (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE),
+                                 (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)):
+                        GL.glTexParameteri(GL.GL_TEXTURE_2D, p, v)
+                    sl["lut_tex"] = GL.glGenTextures(1)
+                    GL.glBindTexture(GL.GL_TEXTURE_3D, sl["lut_tex"])
+                    for p, v in ((GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR),
+                                 (GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR),
+                                 (GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE),
+                                 (GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE),
+                                 (GL.GL_TEXTURE_WRAP_R, GL.GL_CLAMP_TO_EDGE)):
+                        GL.glTexParameteri(GL.GL_TEXTURE_3D, p, v)
+                    sl["size"] = None
+                    sl["lut_key"] = None
+                    sl["img_id"] = None
                 self.u_rect = GL.glGetUniformLocation(prog, "rect")
                 self.u_img = GL.glGetUniformLocation(prog, "img")
                 self.u_lut = GL.glGetUniformLocation(prog, "lut")
@@ -251,27 +287,42 @@ if QOpenGLWidget is not None:
                 self.u_use = GL.glGetUniformLocation(prog, "useLut")
                 self.u_fade = GL.glGetUniformLocation(prog, "fadeAmt")
                 self.u_fcol = GL.glGetUniformLocation(prog, "fadeColor")
+                self.u_alpha = GL.glGetUniformLocation(prog, "alpha")
                 self._ok = True
-                self._img_dirty = self._img is not None
-                self._lut_dirty = self._lut is not None
-                self._tex_size = None
             except Exception as e:  # scheda video non adatta: si passa alla CPU
                 self._ok = False
                 self.failed.emit(str(e))
 
         def set_frame(self, frame):
             self._base_frame(frame)
-            self._img = frame.img
-            self._img_dirty = frame.img is not None
-            if frame.lut_key != self._lut_key:
-                self._lut = frame.lut
-                self._lut_key = frame.lut_key
-                self._lut_dirty = frame.lut is not None
             self.update()
 
         def clear(self):
-            self._img = None
+            self._layers = []
             self.update()
+
+        def _upload(self, sl, ly):
+            GL = self.GL
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+            GL.glBindTexture(GL.GL_TEXTURE_2D, sl["tex"])
+            if sl["img_id"] is not ly.img:
+                img = np.ascontiguousarray(ly.img)
+                ih, iw = img.shape[:2]
+                if sl["size"] != (iw, ih):
+                    GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGB8, iw, ih, 0, GL.GL_RGB, GL.GL_UNSIGNED_BYTE, img)
+                    sl["size"] = (iw, ih)
+                else:
+                    GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, iw, ih, GL.GL_RGB, GL.GL_UNSIGNED_BYTE, img)
+                sl["img_id"] = ly.img
+            GL.glActiveTexture(GL.GL_TEXTURE1)
+            GL.glBindTexture(GL.GL_TEXTURE_3D, sl["lut_tex"])
+            use = 1 if (ly.lut is not None and ly.lut_key != "identity") else 0
+            if use and sl["lut_key"] != ly.lut_key:
+                lut = np.ascontiguousarray(ly.lut, dtype=np.float32)
+                n = lut.shape[0]
+                GL.glTexImage3D(GL.GL_TEXTURE_3D, 0, GL.GL_RGB16F, n, n, n, 0, GL.GL_RGB, GL.GL_FLOAT, lut)
+                sl["lut_key"] = ly.lut_key
+            return use
 
         def paintGL(self):
             if not self._ok:
@@ -284,48 +335,36 @@ if QOpenGLWidget is not None:
                 GL.glClearColor(BG.redF(), BG.greenF(), BG.blueF(), 1.0)
                 GL.glClear(GL.GL_COLOR_BUFFER_BIT)
                 # cornice del formato progetto (nera) anche senza immagine
-                x, y, w, h = fit_rect(1, 1, ww, wh, self.aspect)
+                x, y, w, h = self._project_rect(ww, wh)
                 GL.glEnable(GL.GL_SCISSOR_TEST)
                 GL.glScissor(int(x), int(y), int(w), int(h))
-                bg = self._bg_color() if self._img is not None else (0.0, 0.0, 0.0)
+                bg = self._bg_color() if self._layers else (0.0, 0.0, 0.0)
                 GL.glClearColor(bg[0], bg[1], bg[2], 1)
                 GL.glClear(GL.GL_COLOR_BUFFER_BIT)
-                if self._img is None:
+                if not self._layers:
                     GL.glDisable(GL.GL_SCISSOR_TEST)
                     return
                 GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
-                GL.glActiveTexture(GL.GL_TEXTURE0)
-                GL.glBindTexture(GL.GL_TEXTURE_2D, self.tex)
-                if self._img_dirty:
-                    img = np.ascontiguousarray(self._img)
-                    ih, iw = img.shape[:2]
-                    if self._tex_size != (iw, ih):
-                        GL.glTexImage2D(GL.GL_TEXTURE_2D, 0, GL.GL_RGB8, iw, ih, 0, GL.GL_RGB,
-                                        GL.GL_UNSIGNED_BYTE, img)
-                        self._tex_size = (iw, ih)
-                    else:
-                        GL.glTexSubImage2D(GL.GL_TEXTURE_2D, 0, 0, 0, iw, ih, GL.GL_RGB, GL.GL_UNSIGNED_BYTE, img)
-                    self._img_dirty = False
-                GL.glActiveTexture(GL.GL_TEXTURE1)
-                GL.glBindTexture(GL.GL_TEXTURE_3D, self.lut_tex)
-                use = 1 if (self._lut is not None and self._lut_key != "identity") else 0
-                if use and self._lut_dirty:
-                    lut = np.ascontiguousarray(self._lut, dtype=np.float32)
-                    n = lut.shape[0]
-                    GL.glTexImage3D(GL.GL_TEXTURE_3D, 0, GL.GL_RGB16F, n, n, n, 0, GL.GL_RGB, GL.GL_FLOAT, lut)
-                    self._lut_dirty = False
+                GL.glEnable(GL.GL_BLEND)
+                GL.glBlendFunc(GL.GL_SRC_ALPHA, GL.GL_ONE_MINUS_SRC_ALPHA)
                 GL.glUseProgram(self.prog)
                 GL.glUniform1i(self.u_img, 0)
                 GL.glUniform1i(self.u_lut, 1)
-                GL.glUniform1f(self.u_size, float(self._lut.shape[0]) if use else 33.0)
-                GL.glUniform1i(self.u_use, use)
                 GL.glUniform1f(self.u_fade, float(self._fade))
                 GL.glUniform3f(self.u_fcol, *[float(c) for c in self._fade_color])
-                fx, fy, fw, fh = self._frame_rect(ww, wh)
-                GL.glUniform4f(self.u_rect, fx / ww * 2 - 1, 1 - (fy + fh) / wh * 2, fw / ww * 2, fh / wh * 2)
                 GL.glBindVertexArray(self.vao)
-                GL.glDrawArrays(GL.GL_TRIANGLE_STRIP, 0, 4)
+                for k, ly in enumerate(self._layers[:self.SLOTS]):
+                    use = self._upload(self._slots[k], ly)
+                    GL.glUniform1f(self.u_size, float(ly.lut.shape[0]) if use else 33.0)
+                    GL.glUniform1i(self.u_use, use)
+                    GL.glUniform1f(self.u_alpha, float(ly.alpha))
+                    cx, cy, cw, ch = self._layer_clip(ly, ww, wh)
+                    GL.glScissor(int(round(cx)), int(y), int(round(cw)), int(h))
+                    fx, fy, fw, fh = self._layer_rect(ly, ww, wh)
+                    GL.glUniform4f(self.u_rect, fx / ww * 2 - 1, 1 - (fy + fh) / wh * 2, fw / ww * 2, fh / wh * 2)
+                    GL.glDrawArrays(GL.GL_TRIANGLE_STRIP, 0, 4)
                 GL.glDisable(GL.GL_SCISSOR_TEST)
+                GL.glDisable(GL.GL_BLEND)
                 GL.glBindVertexArray(0)
                 GL.glUseProgram(0)
                 GL.glActiveTexture(GL.GL_TEXTURE0)
@@ -341,43 +380,51 @@ else:
 
 
 class CpuViewer(_Base, QWidget):
-    """Ripiego senza scheda video: disegna con QPainter."""
+    """Ripiego senza scheda video: disegna con QPainter (le immagini arrivano
+    già corrette dal motore)."""
 
     failed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._init_base()
-        self._qimg = None
+        self._qimgs = []
         self.setMinimumSize(320, 180)
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
 
     def set_frame(self, frame):
         self._base_frame(frame)
-        self._img = frame.img
-        if frame.img is None:
-            self._qimg = None
-        else:
-            arr = np.ascontiguousarray(frame.img)
+        self._qimgs = []
+        for ly in self._layers:
+            arr = np.ascontiguousarray(ly.img)
             h, w = arr.shape[:2]
-            self._arr = arr  # QImage non copia i dati: li teniamo vivi
-            self._qimg = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888)
+            # QImage non copia i dati: l'array resta vivo nel livello
+            ly.img = arr
+            self._qimgs.append(QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888))
         self.update()
 
     def clear(self):
-        self._img = None
-        self._qimg = None
+        self._layers = []
+        self._qimgs = []
         self.update()
 
     def paintEvent(self, ev):
         p = QPainter(self)
         p.fillRect(self.rect(), BG)
-        x, y, w, h = fit_rect(1, 1, self.width(), self.height(), self.aspect)
-        bg = self._bg_color() if self._qimg is not None else (0.0, 0.0, 0.0)
+        x, y, w, h = self._project_rect(self.width(), self.height())
+        bg = self._bg_color() if self._layers else (0.0, 0.0, 0.0)
         p.fillRect(QRectF(x, y, w, h), QColor.fromRgbF(*bg))
-        if self._qimg is not None:
-            fx, fy, fw, fh = self._frame_rect(self.width(), self.height())
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        for ly, qimg in zip(self._layers, self._qimgs):
+            cx, cy, cw, ch = self._layer_clip(ly, self.width(), self.height())
+            p.setClipRect(QRectF(cx, cy, cw, ch))
+            p.setOpacity(max(0.0, min(1.0, ly.alpha)))
+            fx, fy, fw, fh = self._layer_rect(ly, self.width(), self.height())
+            p.drawImage(QRectF(fx, fy, fw, fh), qimg)
+        p.setOpacity(1.0)
+        if self._fade > 0.001 and self._layers:  # dissolvenze da/verso nero o bianco
             p.setClipRect(QRectF(x, y, w, h))
-            p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            p.drawImage(QRectF(fx, fy, fw, fh), self._qimg)
+            c = QColor.fromRgbF(*self._fade_color)
+            c.setAlphaF(max(0.0, min(1.0, self._fade)))
+            p.fillRect(QRectF(x, y, w, h), c)
         p.end()

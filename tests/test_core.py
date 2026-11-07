@@ -201,6 +201,92 @@ def test_box_music(tmp):
     print("riquadro e musica ok")
 
 
+def _solid(path, colr, dur, audio_src):
+    subprocess.run([paths.ffmpeg_exe(), "-y", "-v", "error", "-f", "lavfi", "-i",
+                    f"color={colr}:s=640x360:r=25:d={dur}", "-f", "lavfi", "-i", audio_src,
+                    "-c:v", "libx264", "-pix_fmt", "yuv444p", "-qp", "0", "-c:a", "aac", "-shortest", path],
+                   check=True)
+
+
+def test_transitions(tmp):
+    """Transizioni tra due clip, incrocio audio, fermo immagine, volume disegnato, segnaposti."""
+    a = os.path.join(tmp, "rosso.mp4"); b = os.path.join(tmp, "blu.mp4")
+    _solid(a, "red", 4, "anullsrc=r=48000:cl=stereo:d=4")
+    _solid(b, "blue", 4, "sine=frequency=500:duration=4")
+    pr = P.Project(); store = audio.AudioStore()
+    for p_ in (a, b):
+        s_ = pr.add_source(p_, info(4)); store.register(s_["id"], media.make_audio_cache(p_))
+    pr.add_subclip("clip1", 1, 3); pr.add_subclip("clip2", 1, 3)
+    pr.append_to_timeline(["clip1.1", "clip2.1"])
+    va, vb = pr.items_on("video", 0)
+    assert abs(vb["start"] - 2.0) < 1e-6
+
+    def frame(out, ts):
+        fr = subprocess.run([paths.ffmpeg_exe(), "-v", "error", "-ss", f"{ts}", "-i", out, "-frames:v", "1",
+                             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        return np.frombuffer(fr, np.uint8).reshape(360, 640, 3).astype(int)
+
+    def run(name):
+        out = os.path.join(tmp, name + ".mp4")
+        cmd, wd, dur = export.build_job(pr, store, out)
+        err = export.run_job(cmd, wd, dur); assert err is None, (name, err[-800:])
+        return out
+
+    # dissolvenza incrociata di 1 s centrata sul taglio
+    pr.set_transition([vb["id"]], "dissolve", 1.0)
+    tr = pr.transition_at(1.8); assert tr and abs(tr["t0"] - 1.5) < 0.05 and abs(tr["t1"] - tr["t0"] - 1.0) < 1e-6
+    assert pr.transition_at(1.4) is None and pr.transition_at(2.6) is None
+    segs = pr.video_segments()
+    assert len(segs) == 3 and segs[1]["trans"] is not None, segs
+    out = run("dissolvenza")
+    c = frame(out, 2.0)[180, 320]; assert 90 < c[0] < 170 and 90 < c[2] < 170, c   # metà rosso, metà blu
+    assert frame(out, 1.0)[180, 320][0] > 230 and frame(out, 3.0)[180, 320][2] > 230
+    # audio: il blu (con il suono) entra già prima del taglio, sfumando
+    ext = pr.audio_extensions(); assert any(abs(v[0] - 0.5) < 1e-6 for v in ext.values()), ext
+    m = audio.mix_timeline(pr, store, 1.6, 4800); assert 0.005 < np.abs(m).max() < 0.5
+    m = audio.mix_timeline(pr, store, 1.0, 4800); assert np.abs(m).max() < 1e-3
+    # tendina verso sinistra: il blu entra da destra
+    pr.set_transition([vb["id"]], "wipe_l", 1.0)
+    f = frame(run("tendina"), 1.75)
+    assert f[180, 40][0] > 200 and f[180, 600][2] > 200, (f[180, 40], f[180, 600])
+    # scorrimento verso destra: il blu entra da sinistra
+    pr.set_transition([vb["id"]], "push_r", 1.0)
+    f = frame(run("scorrimento"), 1.75)
+    assert f[180, 40][2] > 200 and f[180, 600][0] > 200, (f[180, 40], f[180, 600])
+    # passaggio dal nero: nero al taglio
+    pr.set_transition([vb["id"]], "dip_black", 1.0)
+    out = run("nero")
+    assert frame(out, 2.0)[180, 320].max() < 40 and 60 < frame(out, 1.75)[180, 320][0] < 200
+    pr.set_transition([vb["id"]], None)
+
+    # fermo immagine: 1 s fermo a 0.5 s, il resto slitta in avanti
+    end0 = pr.timeline_end()
+    fr = pr.insert_freeze(va["id"], 0.6, 1.0)
+    assert fr and abs(pr.timeline_end() - end0 - 1.0) < 1e-6 and abs(pr.item_dur(fr) - 1.0) < 1e-6
+    assert abs(pr.src_time(fr, 1.2) - 1.6) < 1e-6
+    assert pr.video_item_at(1.0) is fr and pr.video_item_at(1.6)["source"] == "clip1"
+    out = run("fermo")
+    assert frame(out, 1.0)[180, 320][0] > 230
+    r = subprocess.run([paths.ffmpeg_exe(), "-i", out], capture_output=True, text=True).stderr
+    assert "Duration: 00:00:05" in r or "Duration: 00:00:04.9" in r, r
+
+    # volume disegnato (sul pezzo audio del blu): da -40 dB a 0 dB
+    ab = [i for i in pr.items if i["kind"] == "audio" and i["source"] == "clip2"][0]
+    ab["gain_pts"] = [[1.0, -40.0], [3.0, 0.0]]
+    t_in = ab["start"]
+    q1 = np.abs(audio.mix_timeline(pr, store, t_in + 0.1, 2400)).max()
+    q2 = np.abs(audio.mix_timeline(pr, store, t_in + 1.8, 2400)).max()
+    assert q2 > q1 * 10, (q1, q2)
+
+    # segnaposti: sulla timeline e sul pezzo (si spostano con il pezzo)
+    mk = pr.add_marker(0.52); assert abs(mk["t"] - 0.52) < 1e-6 and 0.52 in pr.snap_points()
+    st = pr.add_item_marker(ab["id"], t_in + 0.4)
+    assert any(abs(x - (t_in + 0.4)) < 1e-6 for x in pr.item_marker_times(ab))
+    pr.move_items([ab["id"]], 0.4, linked=False)
+    assert any(abs(x - (t_in + 0.8)) < 1e-6 for x in pr.item_marker_times(ab)), (st, pr.item_marker_times(ab))
+    print("transizioni, fermo immagine, volume e segnaposti ok")
+
+
 def main():
     test_model(); test_color()
     with tempfile.TemporaryDirectory() as t:
@@ -208,6 +294,7 @@ def main():
         test_effects(t)
         test_curve_bars(t)
         test_box_music(t)
+        test_transitions(t)
     print("TUTTI I TEST OK")
 
 
