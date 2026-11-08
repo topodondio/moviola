@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 import time
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl, Signal
@@ -284,9 +285,9 @@ class MainWindow(QMainWindow):
                 self.right_tabs.setCurrentIndex(max(0, keep - 1))
             self.clip_split.insertWidget(0, self.bin)
             self.bin.show()
-            self.clip_split.setSizes(self.cfg.get("clip_split", [380, 1060]))
+            self.clip_split.setSizes(self.cfg.get("clip_split_v2", [470, 970]))
         elif prev == PAGE_CLIP:
-            self.cfg["clip_split"] = self.clip_split.sizes()
+            self.cfg["clip_split_v2"] = self.clip_split.sizes()
         if index != PAGE_CLIP and self.right_tabs.indexOf(self.bin) < 0:
             keep = self.right_tabs.currentIndex()
             self.right_tabs.insertTab(0, self.bin, "CLIP")
@@ -2317,7 +2318,14 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Esporta", "La timeline è vuota.")
             return
         self.engine.stop()
-        d = ExportDialog(self.project, self.store, self.cfg.get("last_export_dir", os.path.expanduser("~")), self,
+        # cartella proposta: l'ultima usata, altrimenti quella del progetto, altrimenti Filmati
+        start = self.cfg.get("last_export_dir")
+        if not start or not os.path.isdir(start) or os.path.abspath(start) == os.path.expanduser("~"):
+            start = os.path.dirname(os.path.abspath(self.project.path)) if self.project.path else ""
+        if not start or not os.path.isdir(start):
+            movies = os.path.join(os.path.expanduser("~"), "Movies" if sys.platform == "darwin" else "Videos")
+            start = movies if os.path.isdir(movies) else os.path.expanduser("~")
+        d = ExportDialog(self.project, self.store, start, self,
                          text_renderer=render_png)
         if d.exec():
             self.cfg["last_export_dir"] = os.path.dirname(d.path.text())

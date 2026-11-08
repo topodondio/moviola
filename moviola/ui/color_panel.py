@@ -213,7 +213,6 @@ class GradeSlider(QWidget):
         self.spin.setSingleStep(step)
         self.spin.setDecimals(2 if step < 1 else 0)
         self.spin.setFixedWidth(62)
-        self.spin.setProperty("noButtons", True)
         self.spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
         self.spin.setAlignment(Qt.AlignRight)
         lay.addWidget(self.lab)

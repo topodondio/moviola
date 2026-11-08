@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import threading
 
 from PySide6.QtCore import Signal
@@ -131,7 +133,16 @@ class ExportDialog(QDialog):
             QMessageBox.warning(self, "Export non riuscito", err[-1500:])
         else:
             self.bar.setValue(1000)
-            QMessageBox.information(self, "Fatto", f"Video esportato:\n{out}")
+            box = QMessageBox(self)
+            box.setWindowTitle("Fatto")
+            box.setText("Video esportato.")
+            box.setInformativeText(out)
+            show = box.addButton("Mostra nel Finder" if sys.platform == "darwin" else "Mostra cartella",
+                                 QMessageBox.ActionRole)
+            box.addButton(QMessageBox.Ok)
+            box.exec()
+            if box.clickedButton() is show:
+                _reveal(out)
             self.accept()
 
     def _cancel_or_close(self):
@@ -144,3 +155,16 @@ class ExportDialog(QDialog):
         if self._running:
             self._cancel.set()
         super().closeEvent(e)
+
+
+def _reveal(path):
+    """Apre la cartella del file selezionandolo, dove il sistema lo permette."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", path])
+        elif sys.platform.startswith("win"):
+            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+        else:
+            subprocess.Popen(["xdg-open", os.path.dirname(path)])
+    except Exception:
+        pass
