@@ -21,6 +21,7 @@ from .export_dialog import ExportDialog
 from . import icons
 from .inspector import Inspector
 from .meters import DB_MIN, LevelMeter
+from .scrub import ArrowScrubber
 from .welcome import WelcomeDialog
 from .project_settings import ProjectSettingsDialog
 from .text_render import default_family, render_png, text_box
@@ -34,14 +35,14 @@ GREEN_TAG, YELLOW_TAG, RED_TAG = TAGS[0][1], TAGS[1][1], TAGS[3][1]
 SHORTCUTS = """
 <b>Riproduzione</b><br>
 Spazio: play / pausa · J / K / L: indietro / stop / avanti (premi più volte per accelerare)<br>
-← / →: un fotogramma · Maiusc+← / →: un secondo · ↑ / ↓: taglio precedente / successivo<br>
+← / →: un fotogramma; tenendole premute scorre, sempre più veloce · Maiusc+← / →: un secondo · ↑ / ↓: taglio precedente / successivo<br>
 Home / Fine: inizio / fine<br><br>
 <b>Selezione delle parti (visore sorgente)</b><br>
 I / O: ingresso / uscita (su una parte selezionata la modificano subito)<br>
 Invio o M: crea la parte (clip1.1, clip1.2, …) · Ctrl/Cmd+D: duplica · F2: rinomina<br>
 E: accoda alla timeline · F9: inserisci alla testina della timeline<br><br>
 <b>Timeline</b><br>
-B: taglia alla testina · Canc: elimina · Maiusc+Canc: elimina e chiudi lo spazio<br>
+C: taglia alla testina · Canc: elimina · Maiusc+Canc: elimina e chiudi lo spazio<br>
 N: aggancio magnetico on/off (Maiusc mentre trascini lo sospende) · + / −: zoom · Maiusc+Z: adatta · Alt+trascina: muovi solo video o solo audio<br>
 M: segnaposto alla testina (anche mentre suona, per i battiti) · Maiusc+M: segnaposto sul pezzo<br>
 Ctrl/Cmd+T: dissolvenza incrociata con la clip precedente · Maiusc+F: fermo immagine alla testina<br>
@@ -91,6 +92,9 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._build_toolbar()
         self._connect()
+        self.scrubber = ArrowScrubber(self, self.engine,
+                                      lambda msg, ms: self.statusBar().showMessage(msg, ms) if msg
+                                      else self.statusBar().clearMessage())
         self.meter_timer = QTimer(self)
         self.meter_timer.setInterval(40)
         self.meter_timer.timeout.connect(self._update_meter)
@@ -427,7 +431,8 @@ class MainWindow(QMainWindow):
         self.act_undo = act(m, "Annulla", self.undo, "Ctrl+Z")
         self.act_redo = act(m, "Ripeti", self.redo, ["Ctrl+Shift+Z", "Ctrl+Y"])
         m.addSeparator()
-        act(m, "Taglia alla testina", lambda: self.timeline_action("split", list(self.timeline.view.selection)), "B")
+        act(m, "Taglia alla testina", lambda: self.timeline_action("split", list(self.timeline.view.selection)),
+            ["C", "B"])
         act(m, "Elimina", self.delete_selected, ["Delete", "Backspace"])
         act(m, "Elimina e chiudi lo spazio", lambda: self.timeline_action(
             "ripple_delete", list(self.timeline.view.selection)), ["Shift+Delete", "Shift+Backspace"])
@@ -453,8 +458,9 @@ class MainWindow(QMainWindow):
         act(m, "Indietro (J)", lambda: self.engine.shuttle(-1), "J")
         act(m, "Stop (K)", lambda: self.engine.shuttle(0), "K")
         act(m, "Avanti (L)", lambda: self.engine.shuttle(1), "L")
-        act(m, "Fotogramma precedente", lambda: self.engine.step(-1), "Left")
-        act(m, "Fotogramma successivo", lambda: self.engine.step(1), "Right")
+        # ← / → sono gestite a parte (tenendole premute lo scorrimento accelera)
+        act(m, "Fotogramma precedente\t←", lambda: self.engine.step(-1))
+        act(m, "Fotogramma successivo\t→", lambda: self.engine.step(1))
         act(m, "Indietro 1 s", lambda: self.engine.seek(self.engine.position - 1), "Shift+Left")
         act(m, "Avanti 1 s", lambda: self.engine.seek(self.engine.position + 1), "Shift+Right")
         act(m, "Taglio precedente", lambda: self.jump_edit(-1), "Up")

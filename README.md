@@ -181,13 +181,20 @@ Gli fps del progetto sono quelli dell'anteprima della timeline e del video
 esportato; le clip con fps diversi vengono adattate ripetendo o saltando
 fotogrammi. Il visore sorgente mostra invece ogni clip ai suoi fps originali.
 
+### Scorrere con le frecce
+
+**← / →** spostano di un fotogramma; **tenendole premute** la testina scorre
+da sola, prima piano e poi sempre più veloce (fino a 8 volte il tempo reale),
+e si ferma appena le lasci. Vale per il visore attivo: la clip nel visore
+piccolo o la timeline. **Maiusc+← / →** salta di un secondo.
+
 ### Timeline
 
 - 3 tracce video + 3 audio; se ne aggiungono con **+V / +A** (in alto a sinistra).
 - Video: vince la traccia più alta. ON/OFF accanto al nome spegne una traccia.
 - Trascina per spostare (anche su un'altra traccia), i bordi per rifilare.
   Quello che finisce sotto viene sovrascritto (come in Resolve).
-- **B** taglia alla testina · **Canc** elimina · **Maiusc+Canc** elimina e chiude lo spazio.
+- **C** taglia alla testina · **Canc** elimina · **Maiusc+Canc** elimina e chiude lo spazio.
 - Finché video e audio sono collegati, allungarne o accorciarne uno cambia
   anche l'altro della stessa quantità; per lavorarli separati: clic destro →
   Scollega (o Alt mentre trascini).

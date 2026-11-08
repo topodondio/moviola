@@ -1032,7 +1032,7 @@ class TimelineView(QWidget):
         if any(not spd.is_static(i) for i in its):
             m.addAction("Scorri contenuto di 1 fotogramma ←\t,", lambda: self.action.emit("slip:-1", ids))
             m.addAction("Scorri contenuto di 1 fotogramma →\t.", lambda: self.action.emit("slip:1", ids))
-        m.addAction("Taglia alla testina\tB", lambda: self.action.emit("split", ids))
+        m.addAction("Taglia alla testina\tC", lambda: self.action.emit("split", ids))
         m.addAction("Elimina\tCanc", lambda: self.action.emit("delete", ids))
         m.addAction("Elimina e chiudi lo spazio\tMaiusc+Canc", lambda: self.action.emit("ripple_delete", ids))
         m.addSeparator()
@@ -1176,7 +1176,7 @@ class TimelinePanel(QWidget):
         self.btn_settings.setToolTip("Impostazioni del progetto: fps, risoluzione, bande nere (Ctrl/Cmd+,)")
         bar.addWidget(self.btn_settings)
         bar.addSpacing(12)
-        self.btn_split = QPushButton("✂ Taglia (B)")
+        self.btn_split = QPushButton("✂ Taglia (C)")
         self.btn_snap = QPushButton(" Aggancio")
         self.btn_snap.setIcon(icons.icon("magnet", 16))
         self.btn_snap.setCheckable(True)
