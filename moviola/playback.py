@@ -77,6 +77,7 @@ class Engine(QObject):
         self.quality = "meta"
         self.cpu_grade = False  # True se la scheda video non è disponibile
         self.bypass = False  # prima/dopo
+        self.fx_off = False  # effetti spenti nell'anteprima (pulsante FX)
 
         self._lut_cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._cpu_cache: OrderedDict[str, color.CpuLut] = OrderedDict()
@@ -314,7 +315,7 @@ class Engine(QObject):
 
     def _lut_for(self, grades):
         key = color.grade_key(grades)
-        if key == "identity" or self.bypass:
+        if key == "identity" or self.bypass or self.fx_off:
             return None, "identity"
         lut = self._lut_cache.get(key)
         if lut is None:
@@ -337,6 +338,8 @@ class Engine(QObject):
             it = pr.item(f.item_id) if f.item_id else None
             f.bars = (float(it.get("bars", 0.0) or 0.0) if it else 0.0,
                       float(pr.data["settings"].get("bars", 0.0) or 0.0))
+            if self.fx_off:
+                f.bars = (0.0, 0.0)
         return f
 
     def _grade(self, img, grades):
@@ -367,8 +370,9 @@ class Engine(QObject):
         img = fs.get(st, h)
         return None if img is None else np.ascontiguousarray(img)
 
-    @staticmethod
-    def _xf(it):
+    def _xf(self, it):
+        if self.fx_off:
+            return (1.0, 0.0, 0.0)
         return (float(it.get("zoom", 1.0) or 1.0), float(it.get("pos_x", 0.0) or 0.0),
                 float(it.get("pos_y", 0.0) or 0.0))
 
@@ -443,7 +447,7 @@ class Engine(QObject):
             it = pr.video_item_at(t)
             if it is None:
                 return Frame(t, None, label="")
-            tr = pr.transition_at(t)
+            tr = None if self.fx_off else pr.transition_at(t)
             if tr is not None:
                 return self._render_transition(pr, tr, t, h, still)
             label = it.get("origin", it["source"])
@@ -471,7 +475,8 @@ class Engine(QObject):
                                   "clip": None, "dx": 0.0},
                                  {"img": img, "lut": lb, "lut_key": kb, "xf": self._xf(it), "alpha": w,
                                   "clip": None, "dx": 0.0}]
-            fr.fade, fr.fade_color = pr.fade_at(it, t)
+            if not self.fx_off:
+                fr.fade, fr.fade_color = pr.fade_at(it, t)
             fr.xf = self._xf(it)
             fr.item_id = it["id"]
             return fr

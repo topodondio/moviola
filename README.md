@@ -52,7 +52,13 @@ esporta. Le impostazioni del progetto stanno nel pulsante sopra la timeline.
 La colonna a sinistra ha tre schede, scelte con le linguette in alto:
 **CLIP** (in alto un piccolo visore per guardare le clip singole e
 sceglierne le parti, sotto l'elenco di clip video e musica), **EFFETTI** e
-**COLORE**. Il visore grande mostra sempre la timeline. La colonna si
+**COLORE**. Il visore grande mostra sempre la timeline; il pulsante **FX** in alto a
+destra (Ctrl/Cmd+Maiusc+F) spegne e riaccende gli effetti nell'anteprima
+(colore, dissolvenze, transizioni, zoom/posizione, bande nere) per
+confrontare con l'originale; la velocità resta e l'export li usa sempre.
+In timeline le tracce video sono in sfumature di **blu** e quelle audio in
+sfumature di **verde** (dalla più scura, V1/A1, alla più chiara); scritte
+viola, riquadri arancioni. La colonna si
 allarga o si stringe trascinandone il bordo, e si nasconde del tutto con
 l'icona della barra in alto o **Ctrl/Cmd+L** (si riapre da sola se serve,
 per esempio con un doppio clic su un pezzo).

@@ -122,6 +122,21 @@ class MainWindow(QMainWindow):
                                       "Non cambia il video esportato, che usa la risoluzione del progetto.")
         self.preview_combo.setFocusPolicy(Qt.NoFocus)
         head.addWidget(self.preview_combo)
+        head.addSpacing(8)
+        self.fx_btn = QPushButton("FX")
+        self.fx_btn.setCheckable(True)
+        self.fx_btn.setChecked(True)
+        self.fx_btn.setFocusPolicy(Qt.NoFocus)
+        self.fx_btn.setFixedWidth(52)
+        self.fx_btn.setToolTip("Effetti accesi/spenti nell'anteprima (Ctrl/Cmd+Maiusc+F)\n"
+                               "Spenti: niente colore, dissolvenze, transizioni, zoom/posizione e bande nere.\n"
+                               "La velocità resta (cambia i tempi del montaggio). L'export usa sempre gli effetti.")
+        self.fx_btn.setStyleSheet(
+            "QPushButton { font-weight: 700; color: #1b1b1b; background: #e8a33d; border-color: #e8a33d; }"
+            "QPushButton:!checked { color: #9a9a9a; background: #2d2f33; border-color: #5a5c60;"
+            " text-decoration: line-through; }")
+        self.fx_btn.toggled.connect(self.set_fx_enabled)
+        head.addWidget(self.fx_btn)
         tl.addLayout(head)
         self.viewer_holder = QVBoxLayout()
         self.viewer_holder.setContentsMargins(0, 0, 0, 0)
@@ -423,6 +438,8 @@ class MainWindow(QMainWindow):
         act(m, "Incolla regolazioni", self.paste_grade, "Ctrl+Shift+V")
         act(m, "Azzera regolazioni", self.reset_grade)
         self.act_bypass = act(m, "Prima / dopo", self.set_bypass, "\\", checkable=True)
+        act(m, "Effetti accesi/spenti nell'anteprima (FX)", lambda: self.set_fx_enabled(not self.fx_btn.isChecked()),
+            "Ctrl+Shift+F")
         m.addSeparator()
         act(m, "Salva preset…", self.save_preset)
         self.preset_menu = m.addMenu("Applica preset")
@@ -1172,6 +1189,14 @@ class MainWindow(QMainWindow):
         self._apply_aspect()
         self._after_timeline_edit()
         self.statusBar().showMessage(f"Progetto: {vals['width']}×{vals['height']}, {vals['fps']:g} fps", 4000)
+
+    def set_fx_enabled(self, on):
+        self.engine.fx_off = not on
+        if self.fx_btn.isChecked() != on:
+            self.fx_btn.setChecked(on)
+        self.engine.refresh()
+        self.statusBar().showMessage("Effetti accesi" if on else
+                                     "Effetti spenti nell'anteprima (l'export li usa comunque)", 3000)
 
     def set_column_visible(self, on):
         self.side_dock.setVisible(on)

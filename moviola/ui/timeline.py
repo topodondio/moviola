@@ -34,6 +34,17 @@ C_ROW2 = QColor(30, 31, 34)
 C_HEAD = QColor(38, 40, 43)
 C_VIDEO = QColor(70, 98, 138)
 C_AUDIO = QColor(52, 112, 98)
+
+# sfumature per traccia: video = blu (V1 il più scuro), audio = verde (A1 il più scuro)
+VIDEO_SHADES = [QColor(52, 84, 132), QColor(68, 108, 166), QColor(92, 134, 192), QColor(120, 160, 212),
+                QColor(150, 184, 226), QColor(176, 204, 236)]
+AUDIO_SHADES = [QColor(40, 104, 82), QColor(56, 128, 100), QColor(78, 152, 120), QColor(106, 174, 142),
+                QColor(136, 194, 164), QColor(164, 212, 186)]
+
+
+def track_color(kind, track):
+    shades = AUDIO_SHADES if kind == "audio" else VIDEO_SHADES
+    return QColor(shades[min(track, len(shades) - 1)])
 C_TEXT = QColor(122, 84, 150)
 C_SHAPE = QColor(150, 110, 60)
 C_GAIN = QColor(240, 210, 70)
@@ -184,7 +195,10 @@ class TimelineView(QWidget):
         clip = e.rect()
         # righe
         for i, r in enumerate(rows):
-            col = C_ROW if i % 2 == 0 else C_ROW2
+            col = QColor(C_ROW if i % 2 == 0 else C_ROW2)
+            tc_ = track_color(r["kind"], r["track"])  # velatura del colore della traccia
+            col = QColor((col.red() * 9 + tc_.red()) // 10, (col.green() * 9 + tc_.green()) // 10,
+                         (col.blue() * 9 + tc_.blue()) // 10)
             p.fillRect(QRectF(HEAD, r["y"], self.width() - HEAD, r["h"]), col)
         # pezzi
         t_left = self.t_of(HEAD)
@@ -221,6 +235,7 @@ class TimelineView(QWidget):
         f.setBold(True)
         for r in rows:
             tr = pr.tracks(r["kind"])[r["track"]]
+            p.fillRect(QRectF(0, r["y"] + 1, 5, r["h"] - 2), track_color(r["kind"], r["track"]))
             p.setPen(QColor(210, 210, 210) if not tr.get("muted") else QColor(110, 110, 110))
             p.setFont(f)
             p.drawText(QRectF(10, r["y"], 40, r["h"]), Qt.AlignVCenter | Qt.AlignLeft, tr["name"])
@@ -453,7 +468,10 @@ class TimelineView(QWidget):
         pr = self.project
         sel = it["id"] in self.selection
         kind = it["kind"]
-        base = {"video": C_VIDEO, "audio": C_AUDIO, "text": C_TEXT, "shape": C_SHAPE}[kind]
+        base = {"video": track_color("video", it["track"]), "audio": track_color("audio", it["track"]),
+                "text": C_TEXT, "shape": C_SHAPE}[kind]
+        if pr.tracks("audio" if kind == "audio" else "video")[it["track"]].get("muted"):
+            base = QColor(base.red() // 2 + 30, base.green() // 2 + 30, base.blue() // 2 + 30)
         overlay = kind in ("text", "shape")
         src = pr.source(it["source"]) if not overlay else None
         missing = not overlay and src is None
