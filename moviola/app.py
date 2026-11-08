@@ -57,6 +57,21 @@ def main():
     if sys.platform == "darwin":
         app.setFont(QFont(".AppleSystemUIFont", 12))
 
+    # pulsanti standard di Qt (Annulla, Sì, No...) in italiano
+    try:
+        from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+
+        QLocale.setDefault(QLocale(QLocale.Italian, QLocale.Italy))
+        tr_dir = QLibraryInfo.path(QLibraryInfo.TranslationsPath)
+        app._translators = []
+        for name in ("qtbase_it", "qt_it"):
+            tr = QTranslator(app)
+            if tr.load(name, tr_dir):
+                app.installTranslator(tr)
+                app._translators.append(tr)
+    except Exception:
+        pass
+
     from .ui.style import QSS
 
     app.setStyleSheet(QSS)
