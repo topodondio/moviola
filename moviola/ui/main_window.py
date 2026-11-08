@@ -128,13 +128,12 @@ class MainWindow(QMainWindow):
         self.fx_btn.setChecked(True)
         self.fx_btn.setFocusPolicy(Qt.NoFocus)
         self.fx_btn.setFixedWidth(52)
-        self.fx_btn.setToolTip("Effetti accesi/spenti nell'anteprima (Ctrl/Cmd+Maiusc+F)\n"
-                               "Spenti: niente colore, dissolvenze, transizioni, zoom/posizione e bande nere.\n"
-                               "La velocità resta (cambia i tempi del montaggio). L'export usa sempre gli effetti.")
+        self.fx_btn.setToolTip("Correzione colore accesa/spenta nell'anteprima (Ctrl/Cmd+Maiusc+F)\n"
+                               "Spenta: si vedono le clip senza colore (clip intera, pezzo e timeline).\n"
+                               "Dissolvenze, transizioni, zoom, posizione e bande restano. L'export usa sempre il colore.")
         self.fx_btn.setStyleSheet(
             "QPushButton { font-weight: 700; color: #1b1b1b; background: #e8a33d; border-color: #e8a33d; }"
-            "QPushButton:!checked { color: #9a9a9a; background: #2d2f33; border-color: #5a5c60;"
-            " text-decoration: line-through; }")
+            "QPushButton:!checked { color: #9a9a9a; background: #2d2f33; border-color: #5a5c60; }")
         self.fx_btn.toggled.connect(self.set_fx_enabled)
         head.addWidget(self.fx_btn)
         tl.addLayout(head)
@@ -438,7 +437,7 @@ class MainWindow(QMainWindow):
         act(m, "Incolla regolazioni", self.paste_grade, "Ctrl+Shift+V")
         act(m, "Azzera regolazioni", self.reset_grade)
         self.act_bypass = act(m, "Prima / dopo", self.set_bypass, "\\", checkable=True)
-        act(m, "Effetti accesi/spenti nell'anteprima (FX)", lambda: self.set_fx_enabled(not self.fx_btn.isChecked()),
+        act(m, "Correzione colore accesa/spenta nell'anteprima (FX)", lambda: self.set_fx_enabled(not self.fx_btn.isChecked()),
             "Ctrl+Shift+F")
         m.addSeparator()
         act(m, "Salva preset…", self.save_preset)
@@ -1195,8 +1194,8 @@ class MainWindow(QMainWindow):
         if self.fx_btn.isChecked() != on:
             self.fx_btn.setChecked(on)
         self.engine.refresh()
-        self.statusBar().showMessage("Effetti accesi" if on else
-                                     "Effetti spenti nell'anteprima (l'export li usa comunque)", 3000)
+        self.statusBar().showMessage("Correzione colore accesa" if on else
+                                     "Correzione colore spenta nell'anteprima (l'export la usa comunque)", 3000)
 
     def set_column_visible(self, on):
         self.side_dock.setVisible(on)
