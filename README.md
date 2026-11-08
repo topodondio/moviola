@@ -5,7 +5,7 @@ Pensato per chi viene dalla fotografia: si lavora "a clip" e il colore si
 corregge con comandi fotografici (esposizione, contrasto, bilanciamento del
 bianco, curva, HSL per colore), senza nodi.
 
-> Stato: **prototipo 0.6**. Le funzioni base ci sono tutte; da collaudare
+> Stato: **prototipo 0.7**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
 ## Avvio
@@ -36,25 +36,31 @@ sopra col mouse): nuovo, apri, salva, recenti · annulla, ripeti · importa,
 esporta. Le impostazioni del progetto stanno nel pulsante sopra la timeline.
 
 ```
-┌─────────────────────────┬──────────────────────────────────────┐
-│ CLIP │ EFFETTI │ COLORE │  VISORE (sorgente / timeline)        │
-├─────────────────────────┤                                      │
-│ VIDEO          + Clip   │  barra della clip con le parti       │
-│  clip1                  │  ◀◀ ▶ ▶▶  I  O  + Crea parte          │
-│   clip1.1  clip1.2      ├──────────────────────────────────────┤
-│ AUDIO · MUSICA + Audio  │  TIMELINE   V3 V2 V1  │  A1 A2 A3     │
-│  ♪ clip3                │                                      │
-└─────────────────────────┴──────────────────────────────────────┘
+┌───────────────────────────┬──────────────────────────────────────┐
+│ CLIP │ EFFETTI │ COLORE   │  VISORE GRANDE: sempre la timeline    │
+├───────────────────────────┤                                      │
+│ [visore piccolo: clip]    │                                      │
+│ barra con le parti        │  ⏮ ◀◀ ▶ ▶▶ ⏭   timecode               │
+│ ◀◀ ▶ ▶▶  I O + Parte      ├──────────────────────────────────────┤
+├───────────────────────────┤  TIMELINE   V3 V2 V1  │  A1 A2 A3     │
+│ CLIP  + Video + ♪ Audio   │                                      │
+│  clip1 / clip1.1 …        │                                      │
+│  ♪ clip3 (musica)         │                                      │
+└───────────────────────────┴──────────────────────────────────────┘
 ```
 
 La colonna a sinistra ha tre schede, scelte con le linguette in alto:
-**CLIP** (le clip video e, sotto, la sezione **AUDIO · MUSICA**),
-**EFFETTI** e **COLORE**.
+**CLIP** (in alto un piccolo visore per guardare le clip singole e
+sceglierne le parti, sotto l'elenco di clip video e musica), **EFFETTI** e
+**COLORE**. Il visore grande mostra sempre la timeline. La colonna si
+allarga o si stringe trascinandone il bordo, e si nasconde del tutto con
+l'icona della barra in alto o **Ctrl/Cmd+L** (si riapre da sola se serve,
+per esempio con un doppio clic su un pezzo).
 
 1. **Importa** le clip (Ctrl/Cmd+I, o trascina file e cartelle nella lista).
    Diventano `clip1`, `clip2`, … e restano riferimenti ai file originali.
-   I file solo audio (mp3, wav, m4a, aiff…) finiscono nella sezione
-   **AUDIO · MUSICA** («+ Audio» per importarli da lì). Si scelgono le parti
+   I file solo audio (mp3, wav, m4a, aiff…) finiscono in fondo alla stessa
+   lista, segnati con ♪ («+ ♪ Audio» per importarli). Si scelgono le parti
    come per i video e in timeline vanno da soli sull'**ultima traccia audio**
    (A3), la traccia della musica; trascinandoli su un'altra traccia audio
    restano dove li lasci.

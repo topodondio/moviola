@@ -26,7 +26,7 @@ def preview_height(project_h: int, quality: str) -> int:
 
 class Frame:
     __slots__ = ("t", "img", "lut", "lut_key", "graded", "hist", "label", "fade", "fade_color", "xf", "texts",
-                 "item_id", "bars", "layers")
+                 "item_id", "bars", "layers", "mode")
 
     def __init__(self, t, img=None, lut=None, lut_key="identity", graded=False, hist=None, label=""):
         self.t = t
@@ -43,6 +43,7 @@ class Frame:
         self.item_id = None
         self.bars = (0.0, 0.0)  # bande nere: (del pezzo, generali)
         self.layers = None  # transizioni: due immagini da comporre
+        self.mode = "timeline"  # quale visore deve mostrarlo
 
 
 def luma_hist(img: np.ndarray, step: int = 4) -> np.ndarray:
@@ -326,7 +327,10 @@ class Engine(QObject):
         return lut, key
 
     def _render(self, t, still=False):
+        mode = self.mode
         f = self._render_base(t, still)
+        if f is not None:
+            f.mode = mode
         if f is not None and self.mode == "timeline":
             pr = self.get_project()
             f.texts = [(dict(x), pr.opacity_at(x, t)) for x in pr.texts_at(t)]

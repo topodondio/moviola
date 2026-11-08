@@ -113,8 +113,6 @@ class MainWindow(QMainWindow):
         self.mode_label.setObjectName("modeLabel")
         self.name_label = QLabel("")
         self.name_label.setStyleSheet("color:#bbb;")
-        self.btn_mode = QPushButton("Mostra timeline")
-        self.btn_mode.setFocusPolicy(Qt.NoFocus)
         head.addWidget(self.mode_label)
         head.addSpacing(10)
         head.addWidget(self.name_label, 1)
@@ -124,16 +122,14 @@ class MainWindow(QMainWindow):
                                       "Non cambia il video esportato, che usa la risoluzione del progetto.")
         self.preview_combo.setFocusPolicy(Qt.NoFocus)
         head.addWidget(self.preview_combo)
-        head.addSpacing(8)
-        head.addWidget(self.btn_mode)
         tl.addLayout(head)
         self.viewer_holder = QVBoxLayout()
         self.viewer_holder.setContentsMargins(0, 0, 0, 0)
         tl.addLayout(self.viewer_holder, 1)
+        self.src_viewer_holder = QVBoxLayout()
+        self.src_viewer_holder.setContentsMargins(0, 0, 0, 0)
         self.viewer = None
-        self._make_viewer(self.cfg.get("gpu", True))
-        self.source_bar = SourceBar()
-        tl.addWidget(self.source_bar)
+        self.src_viewer = None
         tr = QHBoxLayout()
         tr.setSpacing(4)
 
@@ -145,12 +141,12 @@ class MainWindow(QMainWindow):
             tr.addWidget(b)
             return b
 
-        tb("⏮", "Inizio (Home)", lambda: self.engine.seek(0))
-        tb("◀◀", "Indietro (J)", lambda: self.engine.shuttle(-1))
-        self.play_btn = tb("▶", "Play / pausa (Spazio)", self.engine.toggle)
+        tb("⏮", "Inizio (Home)", lambda: self._tl(lambda: self.engine.seek(0)))
+        tb("◀◀", "Indietro (J)", lambda: self._tl(lambda: self.engine.shuttle(-1)))
+        self.play_btn = tb("▶", "Play / pausa (Spazio)", lambda: self._tl(self.engine.toggle))
         self.play_btn.setFixedWidth(46)
-        tb("▶▶", "Avanti veloce (L)", lambda: self.engine.shuttle(1))
-        tb("⏭", "Fine (Fine)", lambda: self.engine.seek(self.engine.duration()))
+        tb("▶▶", "Avanti veloce (L)", lambda: self._tl(lambda: self.engine.shuttle(1)))
+        tb("⏭", "Fine (Fine)", lambda: self._tl(lambda: self.engine.seek(self.engine.duration())))
         tr.addSpacing(10)
         self.tc_label = QLabel("00:00:00:00")
         self.tc_label.setObjectName("timecode")
@@ -159,14 +155,9 @@ class MainWindow(QMainWindow):
         self.dur_label.setStyleSheet("color:#888;")
         tr.addWidget(self.dur_label)
         tr.addStretch(1)
-        self.src_buttons = [
-            tb("I", "Ingresso (I)", self.mark_in),
-            tb("O", "Uscita (O)", self.mark_out),
-            tb("+ Crea parte", "Crea una parte dai segni I/O (Invio o M)", self.create_subclip),
-            tb("Accoda ⤵", "Accoda alla timeline (E)", self.append_selected),
-            tb("Alla testina", "Inserisci alla testina della timeline (F9)", self.insert_at_playhead),
-        ]
         tl.addLayout(tr)
+        self.src_panel = self._build_source_panel()
+        self._make_viewer(self.cfg.get("gpu", True))
 
         self.timeline = TimelinePanel(self)
         split = QSplitter(Qt.Vertical)
@@ -183,7 +174,15 @@ class MainWindow(QMainWindow):
         self.inspector = Inspector()
         self.right_tabs = QTabWidget()
         self.right_tabs.setDocumentMode(True)
-        self.right_tabs.addTab(self.bin, "CLIP")
+        clip_tab = QSplitter(Qt.Vertical)
+        clip_tab.setChildrenCollapsible(False)
+        clip_tab.addWidget(self.src_panel)
+        clip_tab.addWidget(self.bin)
+        clip_tab.setStretchFactor(0, 2)
+        clip_tab.setStretchFactor(1, 3)
+        clip_tab.setSizes([330, 420])
+        self.right_tabs.addTab(clip_tab, "CLIP")
+        self.right_tabs.setMinimumWidth(220)
         self.right_tabs.addTab(self.inspector, "EFFETTI")
         self.right_tabs.addTab(self.color_panel, "COLORE")
         self.right_tabs.tabBar().setExpanding(True)
@@ -201,11 +200,78 @@ class MainWindow(QMainWindow):
         d.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.LeftDockWidgetArea, d)
         self.side_dock = d
+        d.visibilityChanged.connect(lambda vis: self.act_column.setChecked(d.isVisible())
+                                    if hasattr(self, "act_column") else None)
         self.resizeDocks([d], [370], Qt.Horizontal)
         self.statusBar().showMessage("Pronto. Importa le clip con Ctrl/Cmd+I o trascinandole nella lista.")
 
-    def _make_viewer(self, gpu: bool):
-        old = self.viewer
+    def _build_source_panel(self):
+        """Parte alta della scheda CLIP: piccolo visore per guardare le clip
+        singole e sceglierne le parti."""
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(4, 6, 4, 2)
+        v.setSpacing(3)
+        self.src_name = QLabel("Seleziona una clip nella lista")
+        self.src_name.setStyleSheet("color:#bbb;")
+        self.src_name.setMinimumWidth(10)
+        v.addWidget(self.src_name)
+        v.addLayout(self.src_viewer_holder, 1)
+        self.source_bar = SourceBar()
+        v.addWidget(self.source_bar)
+
+        def btn(row, text, tip, slot, width=None):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setStyleSheet("padding: 3px 6px;")
+            if width:
+                b.setFixedWidth(width)
+            b.clicked.connect(slot)
+            row.addWidget(b)
+            return b
+
+        r1 = QHBoxLayout()
+        r1.setSpacing(3)
+        btn(r1, "◀◀", "Indietro (J)", lambda: self._src(lambda: self.engine.shuttle(-1)), 36)
+        self.src_play_btn = btn(r1, "▶", "Play / pausa (Spazio)", lambda: self._src(self.engine.toggle), 40)
+        btn(r1, "▶▶", "Avanti veloce (L)", lambda: self._src(lambda: self.engine.shuttle(1)), 36)
+        self.src_tc = QLabel("00:00:00:00")
+        self.src_tc.setStyleSheet("font-family: Menlo, Consolas, monospace; color:#f0f0f0;")
+        r1.addSpacing(6)
+        r1.addWidget(self.src_tc)
+        self.src_dur = QLabel("")
+        self.src_dur.setStyleSheet("color:#888;")
+        r1.addWidget(self.src_dur)
+        r1.addStretch(1)
+        v.addLayout(r1)
+        r2 = QHBoxLayout()
+        r2.setSpacing(3)
+        btn(r2, "I", "Ingresso (I)", lambda: self._src(self.mark_in), 30)
+        btn(r2, "O", "Uscita (O)", lambda: self._src(self.mark_out), 30)
+        btn(r2, "+ Parte", "Crea una parte dai segni I/O (Invio)", lambda: self._src(self.create_subclip))
+        r2.addStretch(1)
+        btn(r2, "Accoda ⤵", "Accoda alla timeline (E)", self.append_selected)
+        btn(r2, "Alla testina", "Inserisci alla testina della timeline (F9)", self.insert_at_playhead)
+        v.addLayout(r2)
+        return w
+
+    def _tl(self, fn):
+        """Comandi del visore grande: agiscono sempre sulla timeline."""
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")
+        fn()
+
+    def _src(self, fn):
+        """Comandi del visore piccolo: agiscono sempre sulla clip selezionata."""
+        if self.engine.mode != "source":
+            if not (self.selected_ref or self.project.sources):
+                self.statusBar().showMessage("Importa o seleziona una clip.", 3000)
+                return
+            self.show_current_source()
+        fn()
+
+    def _new_viewer(self, gpu):
         v = None
         if gpu and GlViewer is not None:
             try:
@@ -213,27 +279,37 @@ class MainWindow(QMainWindow):
 
                 v = GlViewer()
                 v.failed.connect(self._gl_failed)
-                self.engine.cpu_grade = False
             except Exception:
                 v = None
         if v is None:
             v = CpuViewer()
-            self.engine.cpu_grade = True
-        if old is not None:
-            self.viewer_holder.removeWidget(old)
-            old.deleteLater()
+        v.setMinimumSize(160, 90)
+        return v
+
+    def _make_viewer(self, gpu: bool):
+        """Crea i due visori: quello grande (timeline) e quello piccolo (clip)."""
+        for old, holder in ((self.viewer, self.viewer_holder), (self.src_viewer, self.src_viewer_holder)):
+            if old is not None:
+                holder.removeWidget(old)
+                old.deleteLater()
+        v = self._new_viewer(gpu)
+        sv = self._new_viewer(gpu)
+        self.engine.cpu_grade = isinstance(v, CpuViewer)
         self.viewer_holder.addWidget(v)
+        self.src_viewer_holder.addWidget(sv)
         self.viewer = v
+        self.src_viewer = sv
         v.overlay.drag_begin.connect(self._viewer_drag_begin)
         v.overlay.drag_move.connect(self._viewer_drag_move)
         v.overlay.drag_end.connect(self._viewer_drag_end)
+        sv.overlay.drag_begin.connect(lambda *_: self._src(lambda: None))
         self.engine._lut_cache.clear()
 
     def _gl_failed(self, msg):
         QTimer.singleShot(0, lambda: self._switch_cpu(msg))
 
     def _switch_cpu(self, msg):
-        if isinstance(self.viewer, CpuViewer):
+        if isinstance(self.viewer, CpuViewer) and isinstance(self.src_viewer, CpuViewer):
             return
         self._make_viewer(False)
         self._apply_aspect()
@@ -311,8 +387,8 @@ class MainWindow(QMainWindow):
         act(m, "Inizio", lambda: self.engine.seek(0), "Home")
         act(m, "Fine", lambda: self.engine.seek(self.engine.duration()), "End")
         m.addSeparator()
-        act(m, "Mostra timeline nel visore", lambda: self.set_viewer_mode("timeline"), "Ctrl+2")
-        act(m, "Mostra clip nel visore", self.show_current_source, "Ctrl+1")
+        act(m, "Comandi sulla clip (visore piccolo)", self.show_current_source, "Ctrl+1")
+        act(m, "Comandi sulla timeline (visore grande)", lambda: self.set_viewer_mode("timeline"), "Ctrl+2")
 
         m = mb.addMenu("Timeline")
         self.act_snap = act(m, "Aggancio", lambda on: self.timeline.btn_snap.setChecked(on), "N",
@@ -374,6 +450,8 @@ class MainWindow(QMainWindow):
         self.act_gpu = act(m, "Anteprima con la scheda video (OpenGL)", self.set_gpu, checkable=True,
                            checked=not self.engine.cpu_grade)
 
+        self.act_column = act(m, "Mostra la colonna (clip, effetti, colore)", self.set_column_visible, "Ctrl+L",
+                              checkable=True, checked=True)
         act(m, "Scheda Clip", lambda: self.show_tab(TAB_CLIP), "Ctrl+3")
         act(m, "Scheda Effetti (velocità, inquadratura, dissolvenze, scritte, riquadri)",
             lambda: self.show_tab(TAB_EFFECTS), "Ctrl+4")
@@ -398,6 +476,7 @@ class MainWindow(QMainWindow):
              (self.act_open, "open", "Apri progetto (Ctrl/Cmd+O)"),
              (self.act_save, "save", "Salva progetto (Ctrl/Cmd+S)"),
              (self.act_recent_tb, "recent", "Progetti recenti (Ctrl/Cmd+Maiusc+O)")],
+            [(self.act_column, "sidebar", "Mostra o nascondi la colonna di sinistra (Ctrl/Cmd+L)")],
             [(self.act_undo, "undo", "Annulla (Ctrl/Cmd+Z)"),
              (self.act_redo, "redo", "Ripeti (Ctrl/Cmd+Maiusc+Z)")],
             [(self.act_import, "import", "Importa clip (Ctrl/Cmd+I)"),
@@ -437,12 +516,11 @@ class MainWindow(QMainWindow):
         e = self.engine
         e.frame_ready.connect(self._on_frame)
         e.position_changed.connect(self._on_position)
-        e.playing_changed.connect(lambda p: self.play_btn.setText("❚❚" if p else "▶"))
+        e.playing_changed.connect(self._playing_changed)
         self.bin.current_changed.connect(self.show_ref)
         self.bin.selection_changed.connect(self._bin_selection)
         self.bin.request.connect(self.bin_action)
         self.bin.import_files.connect(self.import_paths)
-        self.btn_mode.clicked.connect(self._toggle_mode)
         sb = self.source_bar
         sb.seek.connect(lambda t: self.engine.seek(t))
         sb.select_sub.connect(self._select_sub_from_bar)
@@ -507,35 +585,27 @@ class MainWindow(QMainWindow):
         self._update_title()
 
     def _apply_aspect(self):
-        if self.engine.mode == "source":
-            src = self.project.source(self.engine.source_id)
-            if src and src.get("height"):
-                self.viewer.aspect = src["width"] / src["height"]
-        else:
-            w, h = self.project.size
-            self.viewer.aspect = w / max(h, 1)
+        src = self.project.source(self.engine.source_id or "")
+        if src and src.get("height"):
+            self.src_viewer.aspect = src["width"] / src["height"]
+        w, h = self.project.size
+        self.viewer.aspect = w / max(h, 1)
         self.viewer.update()
+        self.src_viewer.update()
 
     def set_viewer_mode(self, mode, source_id=None, force=False):
         if not force and mode == self.engine.mode and source_id == self.engine.source_id:
             return
         self.engine.remember_timeline_pos()
         self.engine.set_mode(mode, source_id)
-        is_src = mode == "source"
-        self.mode_label.setText("SORGENTE" if is_src else "TIMELINE")
-        self.btn_mode.setText("Mostra timeline" if is_src else "Mostra clip")
-        self.source_bar.setVisible(is_src)
-        for b in self.src_buttons[:3]:
-            b.setEnabled(is_src)
         self._apply_aspect()
         self._update_name_label()
         self._update_source_bar()
 
-    def _toggle_mode(self):
-        if self.engine.mode == "source":
-            self.set_viewer_mode("timeline")
-        else:
-            self.show_current_source()
+    def _playing_changed(self, playing):
+        src = self.engine.mode == "source"
+        self.play_btn.setText("❚❚" if playing and not src else "▶")
+        self.src_play_btn.setText("❚❚" if playing and src else "▶")
 
     def show_current_source(self):
         if self.selected_ref:
@@ -544,14 +614,14 @@ class MainWindow(QMainWindow):
             self.show_ref(self.project.sources[0]["id"])
 
     def _update_name_label(self):
-        if self.engine.mode == "source":
-            src, a, b = self.project.range_of(self.selected_ref or "")
-            if src:
-                txt = f"{self.selected_ref}   ·   {src['name']}"
-                self.name_label.setText(txt)
-                self.dur_label.setText(f"/ {tc(src['duration'], src['fps'])}")
-                return
-        self.name_label.setText(self.project.data.get("name", "") if self.engine.mode != "source" else "")
+        src, a, b = self.project.range_of(self.selected_ref or "")
+        if src:
+            self.src_name.setText(f"{self.selected_ref}  ·  {src.get('label') or src['name']}")
+            self.src_name.setToolTip(src["path"])
+            self.src_dur.setText(f"/ {tc(src['duration'], src['fps'])}")
+        else:
+            self.src_name.setText("Seleziona una clip nella lista")
+            self.src_dur.setText("")
         self.dur_label.setText(f"/ {tc(self.project.timeline_end(), self.project.fps)}")
 
     def show_ref(self, ref):
@@ -567,9 +637,11 @@ class MainWindow(QMainWindow):
         self._update_source_bar()
 
     def _update_source_bar(self):
-        if self.engine.mode != "source":
-            return
-        src = self.project.source(self.engine.source_id)
+        sid = self.engine.source_id if self.engine.mode == "source" else None
+        if sid is None:
+            src0, _, _ = self.project.range_of(self.selected_ref or "")
+            sid = src0["id"] if src0 else None
+        src = self.project.source(sid or "")
         if src is None:
             self.source_bar.set_data(0, 25, [], None)
             return
@@ -578,19 +650,23 @@ class MainWindow(QMainWindow):
         mk = self.marks.get(src["id"], [None, None])
         self.source_bar.set_data(src["duration"], src["fps"], subs, sel,
                                  mk[0] if sel is None else None, mk[1] if sel is None else None)
-        self.source_bar.set_position(self.engine.position)
+        if self.engine.mode == "source":
+            self.source_bar.set_position(self.engine.position)
+        else:
+            self.source_bar.set_position(self.engine.source_positions.get(src["id"], 0.0))
 
     def _on_frame(self, f):
-        self.viewer.set_frame(f)
+        (self.src_viewer if f.mode == "source" else self.viewer).set_frame(f)
         if f.hist is not None:
             self.color_panel.curve.set_hist(f.hist)
 
     def _on_position(self, t):
         fps = self.engine.fps()
-        self.tc_label.setText(tc(t, fps))
         if self.engine.mode == "source":
+            self.src_tc.setText(tc(t, fps))
             self.source_bar.set_position(t)
         else:
+            self.tc_label.setText(tc(t, fps))
             ctx = self._anim_context() if self.right_tabs.currentIndex() == TAB_COLOR else None
             if ctx is not None:
                 self.color_panel.set_playhead(t - ctx[0])
@@ -1097,6 +1173,9 @@ class MainWindow(QMainWindow):
         self._after_timeline_edit()
         self.statusBar().showMessage(f"Progetto: {vals['width']}×{vals['height']}, {vals['fps']:g} fps", 4000)
 
+    def set_column_visible(self, on):
+        self.side_dock.setVisible(on)
+
     def show_tab(self, index):
         """Mostra il pannello Effetti (0) o Colore (1), anche se era stato chiuso o staccato."""
         self.side_dock.show()
@@ -1281,7 +1360,10 @@ class MainWindow(QMainWindow):
     # trascinamento nel visore: sposta scritte e inquadratura
     def _viewer_drag_begin(self, nx, ny):
         self._vdrag = None
-        if self.engine.mode != "timeline" or self.engine.playing:
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")  # clic sul visore grande: si torna alla timeline
+            return
+        if self.engine.playing:
             return
         pr = self.project
         t = self.engine.position

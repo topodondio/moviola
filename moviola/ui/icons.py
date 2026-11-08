@@ -102,6 +102,11 @@ def _draw(name: str, p: QPainter, s: float, c: QColor):
             a = k * math.pi / 4
             p.drawLine(QPointF(s / 2 + math.cos(a) * s * 0.24, s / 2 + math.sin(a) * s * 0.24),
                        QPointF(s / 2 + math.cos(a) * s * 0.36, s / 2 + math.sin(a) * s * 0.36))
+    elif name == "sidebar":
+        p.drawRoundedRect(QRectF(m, s * 0.2, s - 2 * m, s * 0.6), s * 0.06, s * 0.06)
+        p.drawLine(QPointF(s * 0.4, s * 0.2), QPointF(s * 0.4, s * 0.8))
+        p.setBrush(QColor(c.red(), c.green(), c.blue(), 110))
+        p.drawRect(QRectF(m, s * 0.2, s * 0.4 - m, s * 0.6))
     elif name == "magnet":
         pen.setWidthF(s * 0.13)
         pen.setCapStyle(Qt.FlatCap)

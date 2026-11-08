@@ -13,7 +13,7 @@ import os
 from PySide6.QtCore import QItemSelectionModel, QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QIcon, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
-                               QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 
 MIME = "application/x-moviola-refs"
@@ -109,7 +109,7 @@ class BinTree(QTreeWidget):
 
 
 class BinPanel(QWidget):
-    """Due sezioni: VIDEO (clip con immagine) e AUDIO (musica e suoni)."""
+    """Un'unica lista: clip video e, in fondo, musica e suoni (♪)."""
 
     selection_changed = Signal(list)  # id selezionati
     current_changed = Signal(str)  # id da mostrare nel visore
@@ -121,21 +121,15 @@ class BinPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 6, 4, 4)
         lay.setSpacing(4)
-        split = QSplitter(Qt.Vertical)
-        split.setChildrenCollapsible(False)
-        self.tree, w_video = self._section("VIDEO", [("+ Clip", "import", "Importa clip video (Ctrl/Cmd+I).\n"
-                                                      "Puoi anche trascinare file o cartelle qui."),
-                                                     ("+ Cartella", "import_folder", "Importa tutta una cartella")])
-        self.audio_tree, w_audio = self._section("AUDIO · MUSICA", [("+ Audio", "import_audio",
-                                                                      "Importa musica o suoni (mp3, wav, m4a, aiff…).\n"
-                                                                      "In timeline vanno sull'ultima traccia audio.")])
-        split.addWidget(w_video)
-        split.addWidget(w_audio)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
-        split.setSizes([420, 220])
-        lay.addWidget(split, 1)
-        self.trees = (self.tree, self.audio_tree)
+        self.tree, w = self._section("CLIP", [
+            ("+ Video", "import", "Importa clip video (Ctrl/Cmd+I).\nPuoi anche trascinare file o cartelle qui."),
+            ("+ Cartella", "import_folder", "Importa tutta una cartella"),
+            ("+ ♪ Audio", "import_audio", "Importa musica o suoni (mp3, wav, m4a, aiff…).\n"
+                                         "In timeline vanno sull'ultima traccia audio.")])
+        lay.addWidget(w, 1)
+        self.audio_tree = self.tree
+        self.trees = (self.tree,)
+        self._audio_ids: set[str] = set()
         self._items: dict[str, QTreeWidgetItem] = {}
         self._status: dict[str, str] = {}
         self._src_names: dict[str, tuple] = {}
@@ -155,6 +149,7 @@ class BinPanel(QWidget):
         row.addStretch(1)
         for text, req, tip in buttons:
             b = QPushButton(text)
+            b.setStyleSheet("padding: 3px 6px;")
             b.setToolTip(tip)
             b.clicked.connect(lambda _=False, r=req: self.request.emit(r, []))
             row.addWidget(b)
@@ -169,7 +164,7 @@ class BinPanel(QWidget):
 
     # ------------------------------------------------------------------
     def _tree_for(self, src):
-        return self.tree if src.get("has_video") else self.audio_tree
+        return self.tree
 
     def rebuild(self, project, select=None):
         self._block = True
@@ -179,7 +174,14 @@ class BinPanel(QWidget):
         for t in self.trees:
             t.clear()
         self._items.clear()
-        for src in project.sources:
+        self._audio_ids = set()
+        # prima le clip video, poi musica e suoni
+        ordered = [x for x in project.sources if x.get("has_video")] + \
+                  [x for x in project.sources if not x.get("has_video")]
+        for src in ordered:
+            if not src.get("has_video"):
+                self._audio_ids.add(src["id"])
+                self._audio_ids.update(c["id"] for c in project.subclips_of(src["id"]))
             tree = self._tree_for(src)
             missing = not os.path.exists(src["path"])
             mark = "" if src.get("has_video") else "♪ "
@@ -296,7 +298,7 @@ class BinPanel(QWidget):
         it = tree.itemAt(pos)
         if it is not None and it.data(0, Qt.UserRole) not in ids:
             ids = [it.data(0, Qt.UserRole)]
-        audio = tree is self.audio_tree
+        audio = bool(ids) and all(i in self._audio_ids for i in ids)
         m = QMenu(self)
         if ids:
             m.addAction("Accoda alla timeline\tE", lambda: self.request.emit("append", ids))
@@ -320,8 +322,7 @@ class BinPanel(QWidget):
                 m.addAction("Crea proxy", lambda: self.request.emit("proxy", ids))
             m.addAction("Ricollega file…", lambda: self.request.emit("relink", ids[:1]))
             m.addAction("Mostra il file nella cartella", lambda: self.request.emit("reveal", ids[:1]))
-        elif audio:
-            m.addAction("Importa audio…", lambda: self.request.emit("import_audio", []))
         else:
-            m.addAction("Importa clip…", lambda: self.request.emit("import", []))
+            m.addAction("Importa clip video…", lambda: self.request.emit("import", []))
+            m.addAction("Importa musica o suoni…", lambda: self.request.emit("import_audio", []))
         m.exec(tree.viewport().mapToGlobal(pos))
