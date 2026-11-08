@@ -6,8 +6,8 @@ import copy
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QGroupBox, QHBoxLayout,
-                               QLabel, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSlider, QTabWidget,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QGroupBox, QHBoxLayout,
+                               QLabel, QLineEdit, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSlider, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from .. import color
@@ -25,6 +25,64 @@ class _ResetSlider(QSlider):
 
     def mouseDoubleClickEvent(self, e):
         self.double_clicked.emit()
+
+
+class _ValueBox(QLineEdit):
+    """Casella numerica semplice (al posto di QDoubleSpinBox, che su macOS senza
+    frecce non mostrava il numero). Frecce su/giù o rotella = un passo."""
+
+    committed = Signal()
+
+    def __init__(self, lo, hi, step, decimals):
+        super().__init__()
+        self.lo, self.hi, self.step, self.dec = lo, hi, step, decimals
+        self._v = 0.0
+        self.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.editingFinished.connect(self._commit)
+        self.setValue(0.0)
+
+    def value(self):
+        return self._v
+
+    def setValue(self, v):
+        self._v = max(self.lo, min(self.hi, float(v)))
+        txt = f"{self._v:.{self.dec}f}"
+        if self.dec and txt.startswith("-0.") and float(txt) == 0:
+            txt = txt[1:]
+        if self.text() != txt:
+            self.setText(txt)
+
+    def _commit(self):
+        try:
+            v = float(self.text().replace(",", "."))
+        except ValueError:
+            self.setValue(self._v)
+            return
+        old = self._v
+        self.setValue(v)
+        if self._v != old:
+            self.committed.emit()
+
+    def _nudge(self, n):
+        old = self._v
+        self.setValue(round(self._v + n * self.step, 6))
+        if self._v != old:
+            self.committed.emit()
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Up:
+            self._nudge(1)
+        elif e.key() == Qt.Key_Down:
+            self._nudge(-1)
+        else:
+            super().keyPressEvent(e)
+
+    def wheelEvent(self, e):
+        if self.hasFocus():
+            self._nudge(1 if e.angleDelta().y() > 0 else -1)
+            e.accept()
+        else:
+            e.ignore()
 
 
 class AnimGraph(QWidget):
@@ -208,20 +266,15 @@ class GradeSlider(QWidget):
         self.sl.setRange(int(round(lo * self.scale)), int(round(hi * self.scale)))
         self.sl.setSingleStep(1)
         self.sl.setPageStep(int(10 * max(1, self.scale / 20)))
-        self.spin = QDoubleSpinBox()
-        self.spin.setRange(lo, hi)
-        self.spin.setSingleStep(step)
-        self.spin.setDecimals(2 if step < 1 else 0)
-        self.spin.setFixedWidth(62)
-        self.spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
-        self.spin.setAlignment(Qt.AlignRight)
+        self.spin = _ValueBox(lo, hi, step, 2 if step < 1 else 0)
+        self.spin.setFixedWidth(56)
         lay.addWidget(self.lab)
         lay.addWidget(self.sl, 1)
         lay.addWidget(self.spin)
         self._block = False
         self.sl.sliderPressed.connect(lambda: self.pressed.emit(self.key))
         self.sl.valueChanged.connect(self._from_slider)
-        self.spin.editingFinished.connect(self._from_spin)
+        self.spin.committed.connect(self._from_spin)
         self.lab.double_clicked.connect(self._reset)
         self.sl.double_clicked.connect(self._reset)
 
