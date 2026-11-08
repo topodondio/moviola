@@ -5,7 +5,7 @@ Pensato per chi viene dalla fotografia: si lavora "a clip" e il colore si
 corregge con comandi fotografici (esposizione, contrasto, bilanciamento del
 bianco, curva, HSL per colore), senza nodi.
 
-> Stato: **prototipo 0.7**. Le funzioni base ci sono tutte; da collaudare
+> Stato: **prototipo 0.8**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
 ## Avvio
@@ -75,6 +75,13 @@ per esempio con un doppio clic su un pezzo).
    segna **I** (ingresso) e **O** (uscita), premi **Invio** (o M).
    Nasce `clip1.1`, poi `clip1.2`, … I numeri non cambiano mai, anche se
    elimini una parte.
+   **Valutazione veloce**: passando il mouse su una riga della lista, il
+   visore piccolo mostra la clip (da sinistra a destra = dall'inizio alla
+   fine), senza aprirla. Con la clip selezionata premi **1** verde (mi
+   piace), **2** giallo, **3** rosso (da scartare), **0** nessuna. Il menu
+   sopra la lista filtra: tutte, solo le verdi, nascondi le rosse, non
+   ancora usate. Le clip e le parti già messe in timeline hanno una ✓ e il
+   testo più tenue, così quelle ancora da usare saltano all'occhio.
    Con il clic destro puoi dare a clip e parti un **colore di etichetta**
    (verde «mi piace», rosso «da scartare», …): la riga si colora e in
    timeline i pezzi che ne derivano hanno una striscia dello stesso colore.
@@ -193,6 +200,17 @@ fotogrammi. Il visore sorgente mostra invece ogni clip ai suoi fps originali.
   trascinano per le dissolvenze in entrata e in uscita; su scritte e
   riquadri la linea azzurra si trascina su e giù per l'opacità.
 - Clic destro su un audio → Volume.
+- **Ripple** (pulsante accanto alla calamita, **Maiusc+R**): eliminando o
+  accorciando un pezzo quello che viene dopo si richiude da solo,
+  allungandolo fa spazio; dal bordo sinistro il pezzo resta fermo dove
+  inizia. Se sotto c'è la musica che continua, si richiudono solo le tracce
+  del pezzo.
+- **Panoramica**: la striscia sopra la timeline mostra tutto il montaggio in
+  miniatura; il riquadro chiaro è la parte visibile, clicca o trascina per
+  spostarti.
+- **Indicatori di livello audio** a destra del visore: verde ok, giallo
+  forte, rosso troppo forte; il quadratino in cima si accende se il suono
+  satura.
 - **Aggancio magnetico** (pulsante con la calamita, tasto **N**): spostando,
   rifilando o trascinando clip dalla lista, i bordi si attaccano a quelli
   delle altre clip **su qualsiasi traccia**, alla testina e all'inizio; una

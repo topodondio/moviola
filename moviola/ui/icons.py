@@ -107,6 +107,11 @@ def _draw(name: str, p: QPainter, s: float, c: QColor):
         p.drawLine(QPointF(s * 0.4, s * 0.2), QPointF(s * 0.4, s * 0.8))
         p.setBrush(QColor(c.red(), c.green(), c.blue(), 110))
         p.drawRect(QRectF(m, s * 0.2, s * 0.4 - m, s * 0.6))
+    elif name == "ripple":
+        p.drawRect(QRectF(m, s * 0.34, s * 0.26, s * 0.32))
+        p.drawRect(QRectF(s * 0.58, s * 0.34, s * 0.26, s * 0.32))
+        p.drawLine(QPointF(s * 0.56, s * 0.5), QPointF(s * 0.46, s * 0.5))
+        _arrow_head(p, QPointF(s * 0.44, s * 0.5), math.pi, s * 0.16)
     elif name == "magnet":
         pen.setWidthF(s * 0.13)
         pen.setCapStyle(Qt.FlatCap)

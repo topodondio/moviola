@@ -317,8 +317,29 @@ def test_color_anim(tmp):
     print("colore animato ok")
 
 
+def test_ripple():
+    """Ripple: rifilare e eliminare richiudono; la musica che continua sotto resta."""
+    pr = P.Project()
+    pr.add_source("/x/a.mp4", info(10))
+    pr.add_source("/x/m.wav", dict(info(30), has_video=False))
+    pr.add_subclip("clip1", 2, 4); pr.add_subclip("clip1", 5, 7)
+    pr.append_to_timeline(["clip1.1", "clip1.2"])
+    music = pr.append_to_timeline(["clip2"])[0]
+    a, b = pr.items_on("video", 0)
+    pr.trim_item(a["id"], "right", 1.0, ripple=True)
+    assert abs(pr.item_end(a) - 1.0) < 1e-6 and abs(b["start"] - 1.0) < 1e-6
+    ab = [i for i in pr.items_on("audio", 0)]
+    assert abs(ab[1]["start"] - 1.0) < 1e-6  # anche l'audio collegato segue
+    assert abs(music["start"]) < 1e-6        # la musica (iniziata prima) non si sposta
+    pr.trim_item(b["id"], "left", 1.6, ripple=True)
+    assert abs(b["start"] - 1.0) < 1e-6 and abs(b["src_in"] - 5.6) < 1e-6
+    pr.delete_items(pr.expand_linked([a["id"]]), ripple=True)
+    assert abs(b["start"]) < 1e-6 and abs(music["start"]) < 1e-6
+    print("ripple ok")
+
+
 def main():
-    test_model(); test_color()
+    test_model(); test_color(); test_ripple()
     with tempfile.TemporaryDirectory() as t:
         test_export(t)
         test_effects(t)

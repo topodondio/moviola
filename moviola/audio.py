@@ -244,6 +244,7 @@ class Player:
         self._wall_start = 0.0
         self.volume = 1.0
         self.speed = 1.0
+        self.levels = (0.0, 0.0)  # picchi dall'ultima lettura (per gli indicatori di livello)
         self.error = None
         try:
             import sounddevice as sd
@@ -261,8 +262,10 @@ class Player:
             outdata.fill(0)
         else:
             try:
-                buf = self.render(self._start_t + self._pos / RATE, frames)
-                outdata[:] = np.clip(buf * self.volume, -1, 1)
+                buf = self.render(self._start_t + self._pos / RATE, frames) * self.volume
+                pk = np.abs(buf).max(axis=0) if buf.size else np.zeros(CHANNELS)
+                self.levels = (max(self.levels[0], float(pk[0])), max(self.levels[1], float(pk[-1])))
+                outdata[:] = np.clip(buf, -1, 1)
             except Exception:
                 outdata.fill(0)
         # momento in cui il primo campione di questo blocco esce dalle casse
@@ -291,6 +294,11 @@ class Player:
             except Exception as e:
                 self.error = f"Audio non disponibile: {e}"
                 self._stream = None
+
+    def take_levels(self):
+        """Picchi (sinistro, destro) dall'ultima chiamata, poi azzera."""
+        lv, self.levels = self.levels, (0.0, 0.0)
+        return lv
 
     def stop(self):
         self.playing = False

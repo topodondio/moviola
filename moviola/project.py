@@ -549,10 +549,12 @@ class Project:
         self.data["items"] = [i for i in self.items if i["id"] not in ids]
         self.place_items(moving)
 
-    def trim_item(self, iid, edge, t, linked=True):
+    def trim_item(self, iid, edge, t, linked=True, ripple=False):
         """Allunga/accorcia un pezzo dal bordo 'left' o 'right' fino al tempo t
         della timeline, entro i limiti del file sorgente. Finché video e audio
-        sono collegati cambiano insieme, della stessa quantità."""
+        sono collegati cambiano insieme, della stessa quantità.
+        ripple: quello che viene dopo segue (si richiude o fa spazio) e, dal
+        bordo sinistro, il pezzo resta fermo dove inizia."""
         it = self.item(iid)
         if it is None:
             return
@@ -569,7 +571,10 @@ class Project:
             src = self.source(g["source"]) if not text else None
             length = self.item_dur(g)
             if edge == "left":
-                lo = max(lo, -g["start"] if text else max(-g["src_in"] / sp, -g["start"]))
+                if ripple:
+                    lo = max(lo, -1e6 if text else -g["src_in"] / sp)
+                else:
+                    lo = max(lo, -g["start"] if text else max(-g["src_in"] / sp, -g["start"]))
                 hi = min(hi, length - fr)
             else:
                 dur = src["duration"] if src else (1e9 if text else g["src_out"])
@@ -578,17 +583,28 @@ class Project:
         d = max(lo, min(hi, d))
         if abs(d) < 1e-9:
             return
+        ids = {g["id"] for g in group}
+        if ripple:
+            # quanto cambia la durata, e da dove in poi si sposta il resto
+            old_end = max(self.item_end(g) for g in group)
+            shift = -d if edge == "left" else d
+            for i in self.items:
+                if i["id"] not in ids and i["start"] >= old_end - 1e-6:
+                    i["start"] = max(0.0, self.snap(i["start"] + shift))
+            for m in self.markers:
+                if m["t"] >= old_end - 1e-6:
+                    m["t"] = max(0.0, self.snap(m["t"] + shift))
         for g in group:
             sp = self.speed(g)
             if edge == "left":
-                g["start"] += d
+                if not ripple:
+                    g["start"] += d
                 if spd.is_static(g):
                     g["src_out"] -= d
                 else:
                     g["src_in"] += d * sp
             else:
                 g["src_out"] += d * sp
-        ids = {g["id"] for g in group}
         for g in group:
             self.clear_range(lane(g), g["track"], g["start"], self.item_end(g), exclude=ids)
 
@@ -628,12 +644,15 @@ class Project:
         self.data["items"] = [i for i in self.items if i["id"] not in ids]
         self._cleanup_links()
         if ripple:
-            # chiude il buco solo se nessun altro pezzo occupa l'intervallo
+            # chiude il buco. Se altre tracce sono occupate in quel tratto (es. la
+            # musica che continua sotto), si richiudono solo le tracce dei pezzi
+            # eliminati e il resto resta dov'è.
             busy = any(i["start"] < b - 1e-6 and self.item_end(i) > a + 1e-6 for i in self.items)
+            lanes = {(lane(i), i["track"]) for i in gone}
+            for i in self.items:
+                if i["start"] >= b - 1e-6 and (not busy or (lane(i), i["track"]) in lanes):
+                    i["start"] = self.snap(i["start"] - (b - a))
             if not busy:
-                for i in self.items:
-                    if i["start"] >= b - 1e-6:
-                        i["start"] = self.snap(i["start"] - (b - a))
                 for m in self.markers:
                     if m["t"] >= b - 1e-6:
                         m["t"] = self.snap(m["t"] - (b - a))

@@ -15,11 +15,12 @@ from .. import audio, color, media, paths
 from .. import speed as spd
 from ..playback import Engine
 from ..project import Project
-from .bin_panel import BinPanel
+from .bin_panel import TAGS, BinPanel
 from .color_panel import ColorPanel
 from .export_dialog import ExportDialog
 from . import icons
 from .inspector import Inspector
+from .meters import DB_MIN, LevelMeter
 from .welcome import WelcomeDialog
 from .project_settings import ProjectSettingsDialog
 from .text_render import default_family, render_png, text_box
@@ -28,6 +29,7 @@ from .timeline import TimelinePanel, tc
 from .viewer import CpuViewer, GlViewer
 
 TAB_CLIP, TAB_EFFECTS, TAB_COLOR = 0, 1, 2
+GREEN_TAG, YELLOW_TAG, RED_TAG = TAGS[0][1], TAGS[1][1], TAGS[3][1]
 
 SHORTCUTS = """
 <b>Riproduzione</b><br>
@@ -46,6 +48,7 @@ Ctrl/Cmd+T: dissolvenza incrociata con la clip precedente · Maiusc+F: fermo imm
 Ctrl/Cmd+Alt+trascina una clip, oppure , e . : scorre il contenuto lasciando posizione e durata<br>
 Quadratini in alto agli angoli delle clip: dissolvenze · linea azzurra su scritte e riquadri: opacità<br>
 Volume disegnato: clic sulla linea gialla di una clip audio, trascina il punto, doppio clic per toglierlo<br>
+1 / 2 / 3 / 0: valuta la clip (verde, giallo, rosso, nessuna) · Maiusc+R: ripple on/off<br>
 T: aggiungi una scritta · R: aggiungi un riquadro colorato · trascina nel visore: sposta scritta, riquadro o inquadratura<br>
 Ctrl/Cmd+clic: selezione multipla · Ctrl/Cmd+A: seleziona tutto<br><br>
 <b>Colore</b><br>
@@ -88,6 +91,10 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._build_toolbar()
         self._connect()
+        self.meter_timer = QTimer(self)
+        self.meter_timer.setInterval(40)
+        self.meter_timer.timeout.connect(self._update_meter)
+        self.meter_timer.start()
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setInterval(self.AUTOSAVE_SECONDS * 1000)
         self.autosave_timer.timeout.connect(self._autosave)
@@ -139,7 +146,12 @@ class MainWindow(QMainWindow):
         tl.addLayout(head)
         self.viewer_holder = QVBoxLayout()
         self.viewer_holder.setContentsMargins(0, 0, 0, 0)
-        tl.addLayout(self.viewer_holder, 1)
+        vrow = QHBoxLayout()
+        vrow.setSpacing(4)
+        vrow.addLayout(self.viewer_holder, 1)
+        self.meter = LevelMeter()
+        vrow.addWidget(self.meter)
+        tl.addLayout(vrow, 1)
         self.src_viewer_holder = QVBoxLayout()
         self.src_viewer_holder.setContentsMargins(0, 0, 0, 0)
         self.viewer = None
@@ -270,6 +282,50 @@ class MainWindow(QMainWindow):
         v.addLayout(r2)
         return w
 
+    def _bin_hover(self, rid, frac):
+        """Passando il mouse sulla lista, il visore piccolo mostra la clip sotto
+        al puntatore (da sinistra a destra = dall'inizio alla fine)."""
+        if self.engine.playing:
+            return
+        if not rid:
+            back = getattr(self, "_hover_back", None)
+            self._hover_back = None
+            if back is not None:
+                mode, sid, pos = back
+                if mode == "source" and sid:
+                    self.set_viewer_mode("source", sid)
+                    self.engine.seek(pos)
+                else:
+                    self.set_viewer_mode("timeline")
+                self._update_source_bar()
+            return
+        src, a, b = self.project.range_of(rid)
+        if src is None or not src.get("has_video"):
+            return
+        if getattr(self, "_hover_back", None) is None:
+            self._hover_back = (self.engine.mode, self.engine.source_id, self.engine.position)
+        if self.engine.mode != "source" or self.engine.source_id != src["id"]:
+            self.engine.set_mode("source", src["id"])
+            self._apply_aspect()
+            self._update_source_bar()
+        self.engine.seek(a + frac * max(0.0, b - a - 1.0 / max(src.get("fps") or 25, 1)))
+
+    def rate_clips(self, tag):
+        """Valutazione veloce con i tasti 1 (verde), 2 (giallo), 3 (rosso), 0 (nessuna)."""
+        ids = self.bin.selected_ids() or ([self.selected_ref] if self.selected_ref else [])
+        if not ids:
+            return
+        self._hover_back = None
+        self.bin_action("tag:" + (tag or ""), ids)
+        names = {GREEN_TAG: "verde", YELLOW_TAG: "giallo", RED_TAG: "rosso"}
+        self.statusBar().showMessage(f"{', '.join(ids)}: " + (names.get(tag, "") or "nessuna etichetta"), 2000)
+
+    def _update_meter(self):
+        if self.engine.playing:
+            self.meter.push(*self.engine.player.take_levels())
+        elif max(self.meter.level) > DB_MIN:
+            self.meter.push(0.0, 0.0)  # discesa morbida a riproduzione ferma
+
     def _tl(self, fn):
         """Comandi del visore grande: agiscono sempre sulla timeline."""
         if self.engine.mode != "timeline":
@@ -382,6 +438,11 @@ class MainWindow(QMainWindow):
         act(m, "Vai all'ingresso", lambda: self.goto_mark(0), "Shift+I")
         act(m, "Vai all'uscita", lambda: self.goto_mark(1), "Shift+O")
         act(m, "Crea parte dai segni", self.create_subclip, ["Return", "Enter"])
+        rm = m.addMenu("Valuta la clip")
+        act(rm, "Verde (mi piace)", lambda: self.rate_clips(GREEN_TAG), "1")
+        act(rm, "Giallo (forse)", lambda: self.rate_clips(YELLOW_TAG), "2")
+        act(rm, "Rosso (da scartare)", lambda: self.rate_clips(RED_TAG), "3")
+        act(rm, "Nessuna etichetta", lambda: self.rate_clips(None), "0")
         act(m, "Duplica parte", lambda: self.bin_action("duplicate", self.bin.selected_ids()), "Ctrl+D")
         act(m, "Rinomina", lambda: self.bin_action("rename", self.bin.selected_ids()[:1]), "F2")
         act(m, "Accoda alla timeline", self.append_selected, "E")
@@ -407,6 +468,9 @@ class MainWindow(QMainWindow):
         m = mb.addMenu("Timeline")
         self.act_snap = act(m, "Aggancio", lambda on: self.timeline.btn_snap.setChecked(on), "N",
                             checkable=True, checked=True)
+        act_r = act(m, "Ripple", lambda on: self.timeline.btn_ripple.setChecked(on), "Shift+R", checkable=True)
+        self.timeline.btn_ripple.toggled.connect(act_r.setChecked)
+        self.timeline.btn_snap.toggled.connect(self.act_snap.setChecked)
         act(m, "Zoom avanti", lambda: self.timeline.view.zoom(1.4), ["+", "="])
         act(m, "Zoom indietro", lambda: self.timeline.view.zoom(1 / 1.4), "-")
         act(m, "Adatta alla finestra", self.timeline.view.zoom_fit, "Shift+Z")
@@ -536,6 +600,7 @@ class MainWindow(QMainWindow):
         self.bin.current_changed.connect(self.show_ref)
         self.bin.selection_changed.connect(self._bin_selection)
         self.bin.request.connect(self.bin_action)
+        self.bin.hover.connect(self._bin_hover)
         self.bin.import_files.connect(self.import_paths)
         sb = self.source_bar
         sb.seek.connect(lambda t: self.engine.seek(t))
@@ -686,6 +751,7 @@ class MainWindow(QMainWindow):
             ctx = self._anim_context() if self.right_tabs.currentIndex() == TAB_COLOR else None
             if ctx is not None:
                 self.color_panel.set_playhead(t - ctx[0])
+            self.timeline.overview.update()
             follow = self.engine.playing
             before = self.timeline.view.scroll_t
             self.timeline.view.set_playhead(t, follow=follow)
@@ -703,6 +769,7 @@ class MainWindow(QMainWindow):
         self.timeline.sync()
 
     def timeline_edit_done(self):
+        self._refresh_used()
         self._mark_dirty()
         self._update_name_label()
         self.engine.refresh()
@@ -834,9 +901,17 @@ class MainWindow(QMainWindow):
         self.timeline.view.set_selection([i["id"] for i in placed], emit=False)
         self._after_timeline_edit()
 
+    def _refresh_used(self):
+        """Aggiorna nella lista le spunte delle clip già usate, solo se cambiano."""
+        key = frozenset((i.get("origin"), i.get("source")) for i in self.project.items)
+        if key != getattr(self, "_used_key", None):
+            self._used_key = key
+            self.bin.rebuild(self.project)
+
     def _after_timeline_edit(self):
         self.timeline.view.update()
         self.timeline.sync()
+        self._refresh_used()
         self._mark_dirty()
         self._update_name_label()
         self.refresh_color_panel()
@@ -985,7 +1060,8 @@ class MainWindow(QMainWindow):
 
     def delete_selected(self):
         if self.active_panel == "timeline":
-            self.timeline_action("delete", list(self.timeline.view.selection))
+            kind = "ripple_delete" if self.timeline.view.ripple else "delete"
+            self.timeline_action(kind, list(self.timeline.view.selection))
         else:
             self.bin_action("delete", self.bin.selected_ids())
 

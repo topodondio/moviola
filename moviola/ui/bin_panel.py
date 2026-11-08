@@ -12,7 +12,7 @@ import os
 
 from PySide6.QtCore import QItemSelectionModel, QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QIcon, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 
@@ -32,6 +32,18 @@ TAGS = [("Verde (mi piace)", "#3e9a4a"), ("Giallo", "#b9a028"), ("Arancione", "#
         ("Rosso (da scartare)", "#b04040"), ("Blu", "#3a6db8"), ("Viola", "#7d4fb0"), ("Grigio", "#6a6a6a")]
 
 
+def _mark_used(item, used):
+    """Le clip già messe in timeline hanno una spunta e il testo più tenue:
+    quelle ancora da usare saltano all'occhio."""
+    if used:
+        item.setText(1, "✓ " + item.text(1))
+        for col in range(3):
+            item.setForeground(col, QColor(140, 140, 140))
+        item.setToolTip(1, "Già usata in timeline")
+    else:
+        item.setToolTip(1, "Non ancora usata in timeline")
+
+
 def _tag_row(item, tag):
     """Colora la riga con l'etichetta scelta (sfondo tenue + bordino pieno)."""
     if not tag:
@@ -46,8 +58,14 @@ def _tag_row(item, tag):
         item.setIcon(0, QIcon(pm))
 
 
+GREEN, RED = TAGS[0][1], TAGS[3][1]
+FILTERS = [("Tutte le clip", "all"), ("Solo le verdi", "green"), ("Nascondi le rosse", "nored"),
+           ("Non ancora usate", "unused")]
+
+
 class BinTree(QTreeWidget):
     files_dropped = Signal(list)
+    hover = Signal(str, float)  # clip sotto al mouse ("" = uscito) e posizione 0..1 nella riga
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,6 +84,8 @@ class BinTree(QTreeWidget):
         self.setUniformRowHeights(False)
         self.setRootIsDecorated(True)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.setMouseTracking(True)
+        self._hover_id = ""
         h = self.header()
         h.setStretchLastSection(False)
         h.setMinimumSectionSize(40)
@@ -75,6 +95,23 @@ class BinTree(QTreeWidget):
 
     def selected_ids(self):
         return [it.data(0, Qt.UserRole) for it in self.selectedItems()]
+
+    def mouseMoveEvent(self, e):
+        super().mouseMoveEvent(e)
+        if e.buttons() != Qt.NoButton:
+            return
+        it = self.itemAt(e.position().toPoint())
+        rid = it.data(0, Qt.UserRole) if it is not None else ""
+        frac = min(1.0, max(0.0, e.position().x() / max(1, self.viewport().width())))
+        if rid or self._hover_id:
+            self._hover_id = rid
+            self.hover.emit(rid, frac)
+
+    def leaveEvent(self, e):
+        super().leaveEvent(e)
+        if self._hover_id:
+            self._hover_id = ""
+            self.hover.emit("", 0.0)
 
     def startDrag(self, actions):
         ids = self.selected_ids()
@@ -115,6 +152,7 @@ class BinPanel(QWidget):
     current_changed = Signal(str)  # id da mostrare nel visore
     request = Signal(str, list)  # azione, id
     import_files = Signal(list)
+    hover = Signal(str, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -142,19 +180,28 @@ class BinPanel(QWidget):
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(3)
-        row = QHBoxLayout()
+        top = QHBoxLayout()
         lab = QLabel(title)
         lab.setStyleSheet("color:#e8a33d; font-weight:700; letter-spacing:1px;")
-        row.addWidget(lab)
-        row.addStretch(1)
+        top.addWidget(lab)
+        self.filter = QComboBox()
+        for text, key in FILTERS:
+            self.filter.addItem(text, key)
+        self.filter.setToolTip("Quali clip mostrare. Valutazione veloce: 1 verde · 2 giallo · 3 rosso · 0 nessuna")
+        self.filter.currentIndexChanged.connect(lambda _: self._apply_filter())
+        top.addWidget(self.filter, 1)
+        v.addLayout(top)
+        row = QHBoxLayout()
         for text, req, tip in buttons:
             b = QPushButton(text)
             b.setStyleSheet("padding: 3px 6px;")
             b.setToolTip(tip)
             b.clicked.connect(lambda _=False, r=req: self.request.emit(r, []))
             row.addWidget(b)
+        row.addStretch(1)
         v.addLayout(row)
         tree = BinTree()
+        tree.hover.connect(self.hover)
         v.addWidget(tree, 1)
         tree.itemSelectionChanged.connect(lambda t=tree: self._sel(t))
         tree.customContextMenuRequested.connect(lambda pos, t=tree: self._menu(t, pos))
@@ -178,6 +225,9 @@ class BinPanel(QWidget):
         # prima le clip video, poi musica e suoni
         ordered = [x for x in project.sources if x.get("has_video")] + \
                   [x for x in project.sources if not x.get("has_video")]
+        used_subs = {i.get("origin") for i in project.items}
+        used_srcs = {i.get("source") for i in project.items}
+        self._meta = {}  # id -> (etichetta, usata, id della clip intera)
         for src in ordered:
             if not src.get("has_video"):
                 self._audio_ids.add(src["id"])
@@ -197,6 +247,8 @@ class BinPanel(QWidget):
             _tag_row(top, src.get("tag"))
             if src["id"] in self._icons:
                 top.setIcon(0, self._icons[src["id"]])
+            self._meta[src["id"]] = (src.get("tag"), src["id"] in used_srcs, None)
+            _mark_used(top, src["id"] in used_srcs)
             f = top.font(0)
             f.setBold(True)
             top.setFont(0, f)
@@ -208,6 +260,8 @@ class BinPanel(QWidget):
                 ch.setData(0, Qt.UserRole, sub["id"])
                 ch.setToolTip(0, lab)
                 _tag_row(ch, sub.get("tag"))
+                self._meta[sub["id"]] = (sub.get("tag"), sub["id"] in used_subs, src["id"])
+                _mark_used(ch, sub["id"] in used_subs)
                 top.addChild(ch)
                 self._items[sub["id"]] = ch
             top.setExpanded(first or src["id"] in expanded or any(s in selected for s in
@@ -221,7 +275,36 @@ class BinPanel(QWidget):
             t.setCurrentItem(cur, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
             t.scrollToItem(cur)
             self._active = t
+        self._apply_filter()
         self._block = False
+
+    def _apply_filter(self):
+        """Nasconde le righe secondo il filtro scelto (le clip intere restano se
+        hanno almeno una parte da mostrare)."""
+        mode = self.filter.currentData()
+        meta = getattr(self, "_meta", {})
+
+        def ok(rid):
+            tag, used, parent = meta.get(rid, (None, False, None))
+            if mode == "green":
+                return tag == GREEN
+            if mode == "nored":
+                ptag = meta.get(parent, (None,))[0] if parent else None
+                return tag != RED and ptag != RED
+            if mode == "unused":
+                return not used
+            return True
+
+        for rid, it in self._items.items():
+            if meta.get(rid, (None, False, None))[2] is not None:
+                it.setHidden(not ok(rid))
+        for rid, it in self._items.items():
+            if meta.get(rid, (None, False, None))[2] is None:
+                kids = [it.child(k) for k in range(it.childCount())]
+                show = ok(rid) or any(not k.isHidden() for k in kids)
+                if mode == "nored" and meta.get(rid, (None,))[0] == RED:
+                    show = False
+                it.setHidden(not show)
 
     def update_subclip(self, sub):
         it = self._items.get(sub["id"])

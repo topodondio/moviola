@@ -87,6 +87,7 @@ class TimelineView(QWidget):
         self.playhead = 0.0
         self.selection: set[str] = set()
         self.snapping = True
+        self.ripple = False
         self._drag = None
         self._ghost = None
         self._rubber = None
@@ -841,7 +842,7 @@ class TimelineView(QWidget):
             _, iid, edge, origin, alt = self._drag
             pr.data["items"] = json.loads(origin)
             t = self._snap(self.t_of(pos.x()), exclude=pr.expand_linked([iid]))
-            pr.trim_item(iid, edge, t, linked=not alt)
+            pr.trim_item(iid, edge, t, linked=not alt, ripple=self.ripple)
             self.changed.emit()
             self.update()
             return
@@ -1082,6 +1083,80 @@ class TimelineView(QWidget):
         m.exec(gp)
 
 
+class TimelineOverview(QWidget):
+    """Tutto il montaggio in miniatura: il riquadro chiaro è la parte visibile
+    della timeline; cliccando o trascinando ci si sposta."""
+
+    def __init__(self, view, panel):
+        super().__init__(panel)
+        self.view = view
+        self.panel = panel
+        self.setFixedHeight(24)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Panoramica del montaggio: clicca o trascina per spostarti")
+
+    def _total(self):
+        v = self.view
+        visible = (v.width() - HEAD) / max(v.pps, 1e-6)
+        return max(v.project.timeline_end(), v.scroll_t + visible, 5.0) * 1.02
+
+    def _x(self, t):
+        return HEAD + t / self._total() * max(1.0, self.width() - HEAD - 6)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(22, 23, 25))
+        pr = self.view.project
+        nv = max(1, len(pr.tracks("video")))
+        na = max(1, len(pr.tracks("audio")))
+        top, bot = 3.0, self.height() - 3.0
+        mid = (top + bot) / 2
+        for it in pr.items:
+            kind = "audio" if it["kind"] == "audio" else "video"
+            if kind == "video":
+                hh = (mid - top) / nv
+                y = mid - (it["track"] + 1) * hh
+            else:
+                hh = (bot - mid) / na
+                y = mid + it["track"] * hh
+            col = track_color(kind, it["track"]) if it["kind"] in ("video", "audio") else \
+                (C_TEXT if it["kind"] == "text" else C_SHAPE)
+            x0, x1 = self._x(it["start"]), self._x(pr.item_end(it))
+            p.fillRect(QRectF(x0, y + 0.5, max(1.0, x1 - x0), max(1.0, hh - 1)), col)
+        v = self.view
+        visible = (v.width() - HEAD) / max(v.pps, 1e-6)
+        r = QRectF(self._x(v.scroll_t), 1, max(4.0, self._x(v.scroll_t + visible) - self._x(v.scroll_t)),
+                   self.height() - 2)
+        p.setPen(QPen(QColor(235, 235, 235, 200), 1))
+        p.setBrush(QColor(255, 255, 255, 28))
+        p.drawRect(r)
+        x = self._x(v.playhead)
+        p.setPen(QPen(C_PLAY, 1))
+        p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+        p.setPen(QColor(120, 120, 120))
+        f = QFont(p.font())
+        f.setPointSizeF(8)
+        p.setFont(f)
+        p.drawText(QRectF(8, 0, HEAD - 12, self.height()), Qt.AlignVCenter | Qt.AlignLeft, "Panoramica")
+        p.end()
+
+    def _jump(self, x):
+        v = self.view
+        t = (x - HEAD) / max(1.0, self.width() - HEAD - 6) * self._total()
+        visible = (v.width() - HEAD) / max(v.pps, 1e-6)
+        v.scroll_t = max(0.0, t - visible / 2)
+        v.update()
+        self.panel.sync()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._jump(e.position().x())
+
+    def mouseMoveEvent(self, e):
+        if e.buttons() & Qt.LeftButton:
+            self._jump(e.position().x())
+
+
 class TimelinePanel(QWidget):
     """Timeline con barra strumenti e barre di scorrimento."""
 
@@ -1111,6 +1186,14 @@ class TimelinePanel(QWidget):
                                  "Una linea arancione mostra dove si è agganciato. Tieni premuto Maiusc\n"
                                  "mentre trascini per sospenderlo un attimo.")
         self.btn_snap.setStyleSheet("QPushButton:checked { background: #5a4520; border-color: #e8a33d; }")
+        self.btn_ripple = QPushButton(" Ripple")
+        self.btn_ripple.setIcon(icons.icon("ripple", 16))
+        self.btn_ripple.setCheckable(True)
+        self.btn_ripple.setToolTip("Ripple (Maiusc+R): eliminando o accorciando un pezzo, quello che viene dopo\n"
+                                   "si richiude da solo; allungandolo, fa spazio. Se sotto c'è la musica che\n"
+                                   "continua, si richiudono solo le tracce del pezzo.")
+        self.btn_ripple.setStyleSheet("QPushButton:checked { background: #5a4520; border-color: #e8a33d; }")
+        self.btn_ripple.toggled.connect(lambda on: setattr(self.view, "ripple", on))
         self.btn_fit = QPushButton("Adatta")
         self.btn_text = QPushButton(" Scritta")
         self.btn_text.setIcon(icons.icon("text", 16))
@@ -1119,7 +1202,7 @@ class TimelinePanel(QWidget):
         self.btn_box.setIcon(icons.icon("box", 16))
         self.btn_box.setToolTip("Aggiungi un riquadro colorato alla testina (R): sfondo per le scritte,\n"
                                 "fascia, schermo pieno colorato…")
-        for b in (self.btn_split, self.btn_snap, self.btn_fit, self.btn_text, self.btn_box):
+        for b in (self.btn_split, self.btn_snap, self.btn_ripple, self.btn_fit, self.btn_text, self.btn_box):
             bar.addWidget(b)
         bar.addStretch(1)
         bar.addWidget(QLabel("Zoom"))
@@ -1131,6 +1214,8 @@ class TimelinePanel(QWidget):
         row = QHBoxLayout()
         row.setSpacing(0)
         self.view = TimelineView(host)
+        self.overview = TimelineOverview(self.view, self)
+        lay.addWidget(self.overview)
         self.vbar = QScrollBar(Qt.Vertical)
         row.addWidget(self.view, 1)
         row.addWidget(self.vbar)
@@ -1183,6 +1268,7 @@ class TimelinePanel(QWidget):
         if v.scroll_y > self.vbar.maximum():
             v.scroll_y = self.vbar.maximum()
         self.vbar.setValue(v.scroll_y)
+        self.overview.update()
         import math
 
         self.zoom.setValue(int(1000 * math.log(v.pps / 2.0) / math.log(400.0)))
