@@ -887,7 +887,10 @@ class TimelineView(QWidget):
         elif d[0] in ("trim", "move", "gain", "fade", "opacity", "slip"):
             origin = d[5] if d[0] == "move" else d[-1] if d[0] in ("fade", "opacity", "slip") else d[3]
             if json.dumps(self.project.data["items"]) == origin:
+                # semplice clic, nulla è cambiato: niente da salvare
                 self.project.drop_checkpoint()
+                self.update()
+                return
             self.changed.emit()
             self.host.timeline_edit_done()
 
