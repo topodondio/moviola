@@ -5,7 +5,7 @@ Pensato per chi viene dalla fotografia: si lavora "a clip" e il colore si
 corregge con comandi fotografici (esposizione, contrasto, bilanciamento del
 bianco, curva, HSL per colore), senza nodi.
 
-> Stato: **prototipo 0.8**. Le funzioni base ci sono tutte; da collaudare
+> Stato: **prototipo 0.9**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
 ## Avvio
@@ -164,6 +164,28 @@ per esempio con un doppio clic su un pezzo).
 - I segnaposti attirano l'aggancio magnetico e le frecce ↑/↓ ci saltano
   sopra. Sul righello si trascinano; clic destro per nome, colore,
   eliminazione; doppio clic per rinominare.
+
+### Progetti, disco esterno e cache
+
+- **Schermata dei progetti** (all'avvio, icona «Progetti» in alto,
+  Ctrl/Cmd+Maiusc+O): mostra tutti i progetti della **cartella dei
+  progetti** (per esempio sul disco esterno dove tieni i video) e quelli
+  aperti di recente altrove, con miniatura, durata, formato e un avviso se
+  mancano file. Nuovo progetto (creato direttamente nella cartella), apri,
+  duplica, rinomina, elimina (nel Cestino), mostra nel Finder.
+- **Percorsi relativi**: il progetto ricorda i video anche rispetto alla
+  propria posizione. Se progetto e video stanno sullo stesso disco, si apre
+  uguale anche se il disco cambia nome o lo colleghi al PC Windows.
+- **Ricollegamento**: se mancano file, «Cerca in una cartella…» li ritrova
+  tutti per nome; ricollegandone uno a mano, gli altri della stessa cartella
+  si ricollegano da soli.
+- **Cache** (proxy, audio decodificato, miniature): in File → Preferenze puoi
+  metterla sul disco esterno (cartella «Moviola Cache») e darle un **limite**
+  in GB: superato, Moviola elimina da sola i file usati meno di recente (mai
+  quelli del progetto aperto). «Svuota cache» la azzera: progetti e video non
+  si toccano e la cache si ricrea quando serve. Se il disco esterno non è
+  collegato, usa per il momento una cache temporanea sul computer. La cache
+  sul disco esterno vale anche dal PC.
 
 ### Salvataggio automatico e copie di sicurezza
 

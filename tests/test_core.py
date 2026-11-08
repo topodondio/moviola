@@ -338,6 +338,50 @@ def test_ripple():
     print("ripple ok")
 
 
+def test_cache_and_paths(tmp):
+    """Cache su un disco esterno con limite; percorsi relativi del progetto."""
+    import time
+    ssd = os.path.join(tmp, "SSD")
+    os.makedirs(os.path.join(ssd, "Video")); os.makedirs(os.path.join(ssd, "Progetti"))
+    cache = os.path.join(ssd, "Moviola Cache"); os.makedirs(cache)
+    old = paths.media_cache_setting()
+    paths.set_media_cache(cache)
+    try:
+        assert paths.cache_root() == cache
+        v = os.path.join(ssd, "Video", "neve.mp4")
+        make_clip(v, 3, "red", 440)
+        a = media.make_audio_cache(v)
+        assert a.startswith(cache)
+        # la chiave non dipende dalla cartella: lo stesso file altrove usa la stessa cache
+        k1 = paths.file_key(v)
+        pr = P.Project(); pr.add_source(v, info(3)); pr.append_to_timeline(["clip1"])
+        pp = os.path.join(ssd, "Progetti", "gita.moviola"); pr.save(pp)
+        assert pr.sources[0]["rel"] == "../Video/neve.mp4"
+        # il disco cambia nome (o viene collegato a un altro computer)
+        ssd2 = os.path.join(tmp, "SSD_rinominato"); os.rename(ssd, ssd2)
+        q = P.Project.load(os.path.join(ssd2, "Progetti", "gita.moviola"))
+        assert os.path.exists(q.sources[0]["path"]) and not q.missing_sources()
+        assert paths.file_key(q.sources[0]["path"]) == k1
+        # disco scollegato: cache temporanea sul computer
+        assert paths.cache_root() != cache and "cache_temporanea" in paths.cache_root()
+        os.rename(ssd2, ssd)
+        assert paths.cache_root() == cache
+        # limite: i file più vecchi se ne vanno, quelli da tenere restano
+        big = []
+        for i in range(4):
+            f = os.path.join(paths.cache_dir("proxy"), f"vecchio{i}.mov")
+            open(f, "wb").write(b"\0" * 400_000)
+            os.utime(f, (time.time() - 1000 + i,) * 2)
+            big.append(f)
+        before = paths.cache_usage()
+        freed = paths.enforce_cache_limit(before - 500_000, keep=[a])
+        assert freed >= 400_000 and os.path.exists(a) and not os.path.exists(big[0])
+        assert paths.clear_cache(keep=[a]) > 0 and os.path.exists(a)
+    finally:
+        paths.set_media_cache(old)
+    print("cache e percorsi ok")
+
+
 def main():
     test_model(); test_color(); test_ripple()
     with tempfile.TemporaryDirectory() as t:
@@ -347,6 +391,7 @@ def main():
         test_box_music(t)
         test_transitions(t)
         test_color_anim(t)
+        test_cache_and_paths(t)
     print("TUTTI I TEST OK")
 
 

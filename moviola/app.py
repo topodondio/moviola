@@ -45,7 +45,8 @@ def main():
 
     cfg_path = paths.config_path()
     cfg = _load_cfg(cfg_path)
-    log_path = os.path.join(paths.cache_root(), "errori.log")
+    log_path = os.path.join(paths.internal_root(), "errori.log")
+    paths.set_media_cache(cfg.get("cache_dir"))
 
     if cfg.get("gpu", True):
         setup_default_format()

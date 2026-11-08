@@ -114,6 +114,7 @@ def parse_ffmpeg_time(line: str):
 def make_audio_cache(src_path: str) -> str:
     out = audio_cache_path(src_path)
     if os.path.exists(out) and os.path.getsize(out) > 0:
+        paths.touch(out)
         return out
     exe = paths.ffmpeg_exe()
     tmp = out + ".part"
@@ -126,6 +127,7 @@ def make_audio_cache(src_path: str) -> str:
 def make_peaks(src_path: str) -> np.ndarray:
     p = peaks_path(src_path)
     if os.path.exists(p):
+        paths.touch(p)
         try:
             return np.load(p)
         except Exception:
@@ -141,6 +143,7 @@ def make_peaks(src_path: str) -> np.ndarray:
 def make_thumb(src_path: str, at: float = 1.0) -> str:
     out = thumb_path(src_path)
     if os.path.exists(out):
+        paths.touch(out)
         return out
     exe = paths.ffmpeg_exe()
     cmd = [exe, "-y", "-v", "error", "-ss", f"{at:.3f}", "-i", src_path, "-frames:v", "1",
@@ -158,6 +161,7 @@ def make_proxy(src_path: str, duration: float, progress=None, cancel=None) -> st
     si decodifica velocemente anche su processori datati)."""
     out = proxy_path(src_path)
     if os.path.exists(out) and os.path.getsize(out) > 0:
+        paths.touch(out)
         return out
     exe = paths.ffmpeg_exe()
     tmp = out + ".part.mov"

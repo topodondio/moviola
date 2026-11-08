@@ -22,6 +22,7 @@ from . import icons
 from .inspector import Inspector
 from .meters import DB_MIN, LevelMeter
 from .scrub import ArrowScrubber
+from .preferences import DEFAULT_LIMIT_GB, PreferencesDialog
 from .welcome import WelcomeDialog
 from .project_settings import ProjectSettingsDialog
 from .text_render import default_family, render_png, text_box
@@ -412,9 +413,10 @@ class MainWindow(QMainWindow):
         m = mb.addMenu("File")
         self.act_new = act(m, "Nuovo progetto", self.new_project, "Ctrl+N")
         self.act_open = act(m, "Apri progetto…", self.open_project, "Ctrl+O")
-        act(m, "Progetti recenti…", self.show_welcome, "Ctrl+Shift+O")
+        act(m, "Progetti (gestione)…", self.show_welcome, "Ctrl+Shift+O")
+        act(m, "Preferenze (cartella progetti, cache)…", self.preferences)
         act(m, "Copie di sicurezza dei progetti…", lambda: QDesktopServices.openUrl(
-            QUrl.fromLocalFile(paths.cache_dir("copie_di_sicurezza"))))
+            QUrl.fromLocalFile(paths.internal_dir("copie_di_sicurezza"))))
         self.recent_menu = m.addMenu("Apri recente")
         self._fill_recent()
         self.act_save = act(m, "Salva", self.save, "Ctrl+S")
@@ -432,7 +434,7 @@ class MainWindow(QMainWindow):
         self.act_redo = act(m, "Ripeti", self.redo, ["Ctrl+Shift+Z", "Ctrl+Y"])
         m.addSeparator()
         act(m, "Taglia alla testina", lambda: self.timeline_action("split", list(self.timeline.view.selection)),
-            ["C", "B"])
+            "C")
         act(m, "Elimina", self.delete_selected, ["Delete", "Backspace"])
         act(m, "Elimina e chiudi lo spazio", lambda: self.timeline_action(
             "ripple_delete", list(self.timeline.view.selection)), ["Shift+Delete", "Shift+Backspace"])
@@ -555,13 +557,13 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         tb.setIconSize(QSize(20, 20))
         tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self.act_recent_tb = QAction("Progetti recenti", self)
+        self.act_recent_tb = QAction("Progetti", self)
         self.act_recent_tb.triggered.connect(lambda _=False: self.show_welcome())
         groups = [
             [(self.act_new, "new", "Nuovo progetto (Ctrl/Cmd+N)"),
              (self.act_open, "open", "Apri progetto (Ctrl/Cmd+O)"),
              (self.act_save, "save", "Salva progetto (Ctrl/Cmd+S)"),
-             (self.act_recent_tb, "recent", "Progetti recenti (Ctrl/Cmd+Maiusc+O)")],
+             (self.act_recent_tb, "recent", "Progetti: elenco, nuovo, duplica, rinomina (Ctrl/Cmd+Maiusc+O)")],
             [(self.act_column, "sidebar", "Mostra o nascondi la colonna di sinistra (Ctrl/Cmd+L)")],
             [(self.act_undo, "undo", "Annulla (Ctrl/Cmd+Z)"),
              (self.act_redo, "redo", "Ripeti (Ctrl/Cmd+Maiusc+Z)")],
@@ -586,17 +588,106 @@ class MainWindow(QMainWindow):
         self.act_redo.setEnabled(self.project.can_redo())
 
     def show_welcome(self):
-        """Schermata con i progetti recenti (all'avvio e da File → Progetti recenti)."""
-        d = WelcomeDialog(self.cfg.get("recent", []), self)
-        if not d.exec():
+        """Schermata dei progetti (all'avvio e dal pulsante «Progetti»)."""
+        d = WelcomeDialog(self.cfg, self.project.path, self)
+        ok = d.exec()
+        self._save_cfg()  # cartella dei progetti, rinomine, eliminazioni
+        self._fill_recent()
+        if not ok:
             return
         kind, path = d.choice
         if kind == "open":
             self.open_project(path)
         elif kind == "browse":
             self.open_project()
-        elif kind == "new" and (self.project.sources or self.project.items or self.project.path):
-            self.new_project()
+        elif kind == "new":
+            self.create_project(path)
+
+    def create_project(self, path):
+        """Nuovo progetto già salvato nella cartella scelta."""
+        if not self._confirm_discard():
+            return
+        self._clear_autosave()
+        self.project = Project()
+        self._reset_state()
+        try:
+            self.project.save(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Nuovo progetto", f"Non riesco a salvare il progetto:\n{e}")
+            self.project.path = None
+        if self.project.path:
+            self._remember_recent(path)
+        self.refresh_all([])
+        self.statusBar().showMessage(f"Nuovo progetto: {os.path.basename(path)}", 4000)
+
+    def _save_cfg(self):
+        try:
+            with open(paths.config_path(), "w", encoding="utf-8") as f:
+                json.dump(self.cfg, f, indent=1)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------- cache
+    def _project_cache_files(self):
+        out = []
+        for s in self.project.sources:
+            p = s["path"]
+            if os.path.exists(p):
+                out += [media.audio_cache_path(p), media.peaks_path(p), media.thumb_path(p), media.proxy_path(p)]
+        return out
+
+    def _schedule_cache_check(self):
+        """Dopo aver creato file in cache controlla il limite (con calma, in background)."""
+        if not hasattr(self, "_cache_timer"):
+            self._cache_timer = QTimer(self)
+            self._cache_timer.setSingleShot(True)
+            self._cache_timer.setInterval(8000)
+            self._cache_timer.timeout.connect(self._enforce_cache)
+        self._cache_timer.start()
+
+    def _enforce_cache(self):
+        limit = float(self.cfg.get("cache_limit_gb", DEFAULT_LIMIT_GB)) * 1024 ** 3
+        keep = self._project_cache_files()
+        self.jobs.submit(paths.enforce_cache_limit, int(limit), keep)
+
+    def preferences(self):
+        old_root = paths.cache_root()
+        d = PreferencesDialog(self.cfg, self._project_cache_files(), self)
+        if not d.exec():
+            return
+        v = d.values()
+        self.cfg["projects_dir"] = v["projects_dir"]
+        self.cfg["cache_limit_gb"] = v["cache_limit_gb"]
+        moved = (v["cache_dir"] or "") != (self.cfg.get("cache_dir") or "")
+        self.cfg["cache_dir"] = v["cache_dir"]
+        paths.set_media_cache(v["cache_dir"])
+        self._save_cfg()
+        if moved:
+            if v["clear_old"] and os.path.isdir(old_root) and os.path.abspath(old_root) != \
+                    os.path.abspath(paths.cache_root()):
+                self.jobs.submit(paths.clear_cache, (), old_root)
+            self._reload_media()
+            self.statusBar().showMessage("Cache spostata: i file si ricreano nella nuova posizione.", 5000)
+        self._enforce_cache()
+
+    def _reload_media(self):
+        """Ricollega audio, forme d'onda, miniature e proxy alla cache attuale."""
+        self.engine.invalidate_source(None)
+        self.proxies.clear()
+        self.peaks.clear()
+        self.store = audio.AudioStore()
+        self.engine.store = self.store
+        for src in self.project.sources:
+            raw = media.audio_cache_path(src["path"])
+            if os.path.exists(raw):
+                self.store.register(src["id"], raw)
+            self.start_source_jobs(src)
+        self.timeline.view.update()
+
+    def _cache_notice(self):
+        if self.cfg.get("cache_dir") and not paths.media_cache_available():
+            self.statusBar().showMessage("Il disco della cache non è collegato: per ora uso una cache temporanea "
+                                         "sul computer.", 10000)
 
     def _connect(self):
         e = self.engine
@@ -1025,10 +1116,11 @@ class MainWindow(QMainWindow):
             if p:
                 pr.checkpoint()
                 pr.relink_source(src["id"], p)
-                self.proxies.pop(src["id"], None)
-                self.engine.invalidate_source(None)
-                self.start_source_jobs(src)
+                more = pr.relink_folder(os.path.dirname(p))  # gli altri file mancanti nella stessa cartella
+                self._reload_media()
                 self.refresh_all([src["id"]])
+                if more:
+                    self.statusBar().showMessage(f"Ricollegati anche altri {more} file dalla stessa cartella.", 5000)
         elif action == "reveal":
             src, _, _ = pr.range_of(ids[0])
             if src:
@@ -1807,6 +1899,7 @@ class MainWindow(QMainWindow):
         elif kind == "audio_ready":
             self.store.register(key, payload)
             self._set_status(key)
+            self._schedule_cache_check()
         elif kind == "peaks":
             self.peaks[key] = payload
             self.timeline.view.update()
@@ -1820,6 +1913,7 @@ class MainWindow(QMainWindow):
             self.bin.set_status(key, f"proxy {int(payload * 100)}%")
         elif kind == "proxy_ready":
             self._busy_proxy.discard(key)
+            self._schedule_cache_check()
             if payload:
                 self.proxies[key] = payload
                 src = pr.source(key)
@@ -1968,10 +2062,22 @@ class MainWindow(QMainWindow):
         self.timeline.view.zoom_fit()
         missing = pr.missing_sources()
         if missing:
-            QMessageBox.warning(self, "File non trovati",
-                                "Questi file originali non sono stati trovati:\n\n"
-                                + "\n".join(f"{s['id']}: {s['path']}" for s in missing[:15])
-                                + "\n\nUsa «Ricollega file…» (clic destro sulla clip).")
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("File non trovati")
+            box.setText(f"{len(missing)} file originali non sono stati trovati (il disco esterno è collegato?).")
+            box.setDetailedText("\n".join(f"{s['id']}: {s['path']}" for s in missing))
+            search = box.addButton("Cerca in una cartella…", QMessageBox.AcceptRole)
+            box.addButton("Più tardi", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is search:
+                d = QFileDialog.getExistingDirectory(self, "Cartella dove cercare i video")
+                if d:
+                    pr.checkpoint()
+                    n = pr.relink_folder(d)
+                    self._reload_media()
+                    self.refresh_all([])
+                    self.statusBar().showMessage(f"Ricollegati {n} file su {len(missing)}.", 6000)
 
     def save(self):
         if not self.project.path:
@@ -1997,7 +2103,7 @@ class MainWindow(QMainWindow):
 
         base = os.path.splitext(os.path.basename(self.project.path))[0] if self.project.path else "senza_titolo"
         key = hashlib.sha1((self.project.path or f"nuovo-{id(self.project)}").encode()).hexdigest()[:8]
-        return os.path.join(paths.cache_dir("autosalvataggi"), f"{base}_{key}.moviola")
+        return os.path.join(paths.internal_dir("autosalvataggi"), f"{base}_{key}.moviola")
 
     def _autosave(self):
         pr = self.project
@@ -2031,7 +2137,7 @@ class MainWindow(QMainWindow):
         if not os.path.exists(path):
             return
         try:
-            d = paths.cache_dir("copie_di_sicurezza")
+            d = paths.internal_dir("copie_di_sicurezza")
             base = os.path.splitext(os.path.basename(path))[0]
             stamp = time.strftime("%Y%m%d-%H%M%S")
             shutil.copy2(path, os.path.join(d, f"{base}_{stamp}.moviola"))
@@ -2058,6 +2164,8 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Progetto recuperato: salvalo per confermare le modifiche.", 8000)
                 return
             self._clear_autosave()
+        self._cache_notice()
+        self._enforce_cache()
         self.show_welcome()
 
     def save_as(self):

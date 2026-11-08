@@ -101,12 +101,63 @@ class Project:
         base = new_project_data()
         for k, v in base.items():
             data.setdefault(k, v)
-        return cls(data, path)
+        pr = cls(data, path)
+        pr.resolve_paths()
+        return pr
+
+    def resolve_paths(self):
+        """Ritrova i file originali che non sono al percorso salvato usando il
+        percorso relativo al progetto (disco esterno rinominato, collegato al
+        PC Windows invece che al Mac, cartella spostata insieme al progetto)."""
+        if not self.path:
+            return 0
+        base = os.path.dirname(os.path.abspath(self.path))
+        found = 0
+        for s in self.sources:
+            if os.path.exists(s["path"]) or not s.get("rel"):
+                continue
+            cand = os.path.normpath(os.path.join(base, *s["rel"].split("/")))
+            if os.path.exists(cand):
+                s["path"] = cand
+                found += 1
+        return found
+
+    def _store_relative(self, path):
+        base = os.path.dirname(os.path.abspath(path))
+        for s in self.sources:
+            try:
+                rel = os.path.relpath(s["path"], base)
+            except ValueError:  # Windows: dischi diversi
+                s.pop("rel", None)
+                continue
+            s["rel"] = rel.replace(os.sep, "/")
+
+    def relink_folder(self, folder):
+        """Ricollega i file mancanti cercando lo stesso nome in una cartella (e
+        nelle sue sottocartelle, fino a due livelli). Restituisce quanti."""
+        missing = {os.path.basename(s["path"]).lower(): s for s in self.missing_sources()}
+        if not missing:
+            return 0
+        n = 0
+        root_depth = folder.rstrip(os.sep).count(os.sep)
+        for root, dirs, files in os.walk(folder):
+            if root.count(os.sep) - root_depth >= 2:
+                dirs[:] = []
+            for f in files:
+                s = missing.pop(f.lower(), None)
+                if s is not None:
+                    s["path"] = os.path.join(root, f)
+                    s["name"] = f
+                    n += 1
+            if not missing:
+                break
+        return n
 
     def save(self, path: str | None = None):
         path = path or self.path
         if not path:
             raise ValueError("percorso mancante")
+        self._store_relative(path)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=1, ensure_ascii=False)
