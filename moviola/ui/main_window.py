@@ -8,7 +8,7 @@ import time
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence, QPixmap
-from PySide6.QtWidgets import (QComboBox, QDockWidget, QTabWidget, QToolBar, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QComboBox, QSizePolicy, QStackedWidget, QTabBar, QTabWidget, QToolBar, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QMainWindow, QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget)
 
 from .. import audio, color, media, paths
@@ -23,7 +23,7 @@ from .inspector import Inspector
 from .meters import DB_MIN, LevelMeter
 from .scrub import ArrowScrubber
 from .preferences import DEFAULT_LIMIT_GB, PreferencesDialog
-from .welcome import WelcomeDialog
+from .welcome import ProjectsPanel
 from .project_settings import ProjectSettingsDialog
 from .text_render import default_family, render_png, text_box
 from .source_bar import SourceBar
@@ -31,6 +31,12 @@ from .timeline import TimelinePanel, tc
 from .viewer import CpuViewer, GlViewer
 
 TAB_CLIP, TAB_EFFECTS, TAB_COLOR = 0, 1, 2
+PAGE_PROJECTS, PAGE_CLIP, PAGE_MONTAGE = 0, 1, 2
+TAB_QSS = ("QTabWidget::pane { border: none; }"
+           "QTabBar::tab { padding: 8px 6px; font-weight: 700; letter-spacing: 1px; color: #8d8d8d;"
+           " background: #1f2022; border: none; border-bottom: 2px solid #2c2d30; min-width: 70px; }"
+           "QTabBar::tab:selected { color: #f0f0f0; background: #26272a; border-bottom: 2px solid #e8a33d; }"
+           "QTabBar::tab:hover:!selected { color: #cfcfcf; }")
 GREEN_TAG, YELLOW_TAG, RED_TAG = TAGS[0][1], TAGS[1][1], TAGS[3][1]
 
 SHORTCUTS = """
@@ -100,6 +106,7 @@ class MainWindow(QMainWindow):
         self.meter_timer.setInterval(40)
         self.meter_timer.timeout.connect(self._update_meter)
         self.meter_timer.start()
+        self.set_page(PAGE_PROJECTS)
         self.autosave_timer = QTimer(self)
         self.autosave_timer.setInterval(self.AUTOSAVE_SECONDS * 1000)
         self.autosave_timer.timeout.connect(self._autosave)
@@ -191,62 +198,146 @@ class MainWindow(QMainWindow):
         self._make_viewer(self.cfg.get("gpu", True))
 
         self.timeline = TimelinePanel(self)
-        split = QSplitter(Qt.Vertical)
-        split.addWidget(top)
-        split.addWidget(self.timeline)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
-        split.setSizes([520, 330])
-        self.setCentralWidget(split)
+        work = QSplitter(Qt.Vertical)
+        work.addWidget(top)
+        work.addWidget(self.timeline)
+        work.setStretchFactor(0, 3)
+        work.setStretchFactor(1, 2)
+        work.setSizes([520, 330])
 
-        # un'unica colonna con le linguette CLIP · EFFETTI · COLORE
+        # colonna della scheda MONTAGGIO: CLIP (solo elenco) · EFFETTI · COLORE
         self.bin = BinPanel()
         self.color_panel = ColorPanel()
         self.inspector = Inspector()
         self.right_tabs = QTabWidget()
         self.right_tabs.setDocumentMode(True)
-        clip_tab = QSplitter(Qt.Vertical)
-        clip_tab.setChildrenCollapsible(False)
-        clip_tab.addWidget(self.src_panel)
-        clip_tab.addWidget(self.bin)
-        clip_tab.setStretchFactor(0, 2)
-        clip_tab.setStretchFactor(1, 3)
-        clip_tab.setSizes([330, 420])
-        self.right_tabs.addTab(clip_tab, "CLIP")
-        self.right_tabs.setMinimumWidth(220)
+        self.right_tabs.addTab(self.bin, "CLIP")
         self.right_tabs.addTab(self.inspector, "EFFETTI")
         self.right_tabs.addTab(self.color_panel, "COLORE")
         self.right_tabs.tabBar().setExpanding(True)
-        self.right_tabs.setCurrentIndex(TAB_CLIP)
-        self.right_tabs.setStyleSheet(
-            "QTabWidget::pane { border: none; }"
-            "QTabBar::tab { padding: 8px 6px; font-weight: 700; letter-spacing: 1px; color: #8d8d8d;"
-            " background: #1f2022; border: none; border-bottom: 2px solid #2c2d30; min-width: 70px; }"
-            "QTabBar::tab:selected { color: #f0f0f0; background: #26272a; border-bottom: 2px solid #e8a33d; }"
-            "QTabBar::tab:hover:!selected { color: #cfcfcf; }")
-        d = QDockWidget("", self)
-        d.setObjectName("dock_colonna")
-        d.setTitleBarWidget(QWidget())  # niente barra del titolo: bastano le linguette
-        d.setWidget(self.right_tabs)
-        d.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.addDockWidget(Qt.LeftDockWidgetArea, d)
-        self.side_dock = d
-        d.visibilityChanged.connect(lambda vis: self.act_column.setChecked(d.isVisible())
-                                    if hasattr(self, "act_column") else None)
-        self.resizeDocks([d], [370], Qt.Horizontal)
-        self.statusBar().showMessage("Pronto. Importa le clip con Ctrl/Cmd+I o trascinandole nella lista.")
+        self.right_tabs.setCurrentIndex(TAB_EFFECTS)
+        self.right_tabs.setMinimumWidth(220)
+        self.right_tabs.setStyleSheet(TAB_QSS)
+
+        self.mont_split = QSplitter(Qt.Horizontal)
+        self.mont_split.addWidget(self.right_tabs)
+        self.mont_split.addWidget(work)
+        self.mont_split.setStretchFactor(0, 0)
+        self.mont_split.setStretchFactor(1, 1)
+        self.mont_split.setSizes([360, 1080])
+
+        # scheda CLIP: elenco per cartelle a sinistra, visore grande a destra
+        self.clip_split = QSplitter(Qt.Horizontal)
+        self.clip_split.setChildrenCollapsible(False)
+        self.clip_split.addWidget(self.src_panel)
+        self.clip_split.setStretchFactor(0, 1)
+
+        # scheda PROGETTI
+        self.projects = ProjectsPanel(self.cfg)
+        self.projects.chosen.connect(self._project_chosen)
+        self.projects.changed.connect(lambda: (self._save_cfg(), self._fill_recent()))
+
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self.projects)
+        self.pages.addWidget(self.clip_split)
+        self.pages.addWidget(self.mont_split)
+        self.setCentralWidget(self.pages)
+        self.page = None
+        self.statusBar().showMessage("Pronto.")
+
+    # ------------------------------------------------------------ schede
+    def _build_page_bar(self):
+        """Le tre schede principali, al centro della barra in alto."""
+        self.page_bar = QTabBar()
+        self.page_bar.setDrawBase(False)
+        self.page_bar.setExpanding(False)
+        for lab in ("PROGETTI", "CLIP", "MONTAGGIO"):
+            self.page_bar.addTab(lab)
+        self.page_bar.setStyleSheet(
+            "QTabBar::tab { padding: 7px 26px; font-weight: 700; letter-spacing: 2px; color: #8d8d8d;"
+            " background: transparent; border: none; border-bottom: 2px solid transparent; }"
+            "QTabBar::tab:selected { color: #f2f2f2; border-bottom: 2px solid #e8a33d; }"
+            "QTabBar::tab:hover:!selected { color: #d0d0d0; }")
+        self.page_bar.setToolTip("Progetti (Ctrl/Cmd+Maiusc+1) · Clip (Ctrl/Cmd+Maiusc+2) · "
+                                 "Montaggio (Ctrl/Cmd+Maiusc+3)")
+        self.page_bar.currentChanged.connect(self.set_page)
+        return self.page_bar
+
+    def set_page(self, index):
+        """Passa a una delle tre schede (0 progetti, 1 clip, 2 montaggio)."""
+        if index == self.page:
+            return
+        prev = self.page
+        self.page = index
+        if self.page_bar.currentIndex() != index:
+            self.page_bar.blockSignals(True)
+            self.page_bar.setCurrentIndex(index)
+            self.page_bar.blockSignals(False)
+        if self.engine.playing:
+            self.engine.stop()
+        if index == PAGE_CLIP:
+            # l'elenco delle clip passa a sinistra del visore grande
+            keep = self.right_tabs.currentIndex()
+            i = self.right_tabs.indexOf(self.bin)
+            if i >= 0:
+                self.right_tabs.removeTab(i)
+                self.right_tabs.setCurrentIndex(max(0, keep - 1))
+            self.clip_split.insertWidget(0, self.bin)
+            self.bin.show()
+            self.clip_split.setSizes(self.cfg.get("clip_split", [380, 1060]))
+        elif prev == PAGE_CLIP:
+            self.cfg["clip_split"] = self.clip_split.sizes()
+        if index != PAGE_CLIP and self.right_tabs.indexOf(self.bin) < 0:
+            keep = self.right_tabs.currentIndex()
+            self.right_tabs.insertTab(0, self.bin, "CLIP")
+            self.right_tabs.setCurrentIndex(keep + 1)
+        self.pages.setCurrentIndex(index)
+        if index == PAGE_PROJECTS:
+            self.projects.set_current(self.project.path)
+            self.projects.refresh()
+        elif index == PAGE_CLIP:
+            self.show_current_source()
+        else:
+            self.set_viewer_mode("timeline")
+
+    def _project_chosen(self, kind, path):
+        if kind == "open":
+            self.open_project(path)
+        elif kind == "browse":
+            self.open_project()
+        elif kind == "new":
+            self.create_project(path)
+
+    def _after_project_loaded(self):
+        """Aperto o creato un progetto: si va alle clip se la timeline è vuota,
+        altrimenti al montaggio."""
+        self.set_page(PAGE_MONTAGE if self.project.items else PAGE_CLIP)
 
     def _build_source_panel(self):
-        """Parte alta della scheda CLIP: piccolo visore per guardare le clip
-        singole e sceglierne le parti."""
+        """Scheda CLIP: visore grande per guardare le clip e sceglierne le parti."""
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(4, 6, 4, 2)
-        v.setSpacing(3)
-        self.src_name = QLabel("Seleziona una clip nella lista")
-        self.src_name.setStyleSheet("color:#bbb;")
+        v.setContentsMargins(8, 8, 8, 6)
+        v.setSpacing(4)
+        head = QHBoxLayout()
+        self.src_name = QLabel("Seleziona una clip nell'elenco")
+        self.src_name.setStyleSheet("color:#cfcfcf; font-size: 13px;")
         self.src_name.setMinimumWidth(10)
-        v.addWidget(self.src_name)
+        head.addWidget(self.src_name, 1)
+        head.addWidget(QLabel("Anteprima"))
+        self.src_quality_combo = QComboBox()
+        for k, lab in (("piena", "Piena"), ("meta", "1/2"), ("terzo", "1/3"), ("quarto", "1/4 (la più fluida)")):
+            self.src_quality_combo.addItem(lab, k)
+        self.src_quality_combo.setToolTip("Qualità dell'anteprima delle clip: più bassa = più fluida.\n"
+                                          "Fino a 540 righe si usano i proxy, se ci sono.")
+        self.src_quality_combo.setFocusPolicy(Qt.NoFocus)
+        i = self.src_quality_combo.findData(self.cfg.get("src_quality", "meta"))
+        self.src_quality_combo.setCurrentIndex(max(0, i))
+        self.engine.src_quality = self.src_quality_combo.currentData()
+        self.src_quality_combo.currentIndexChanged.connect(
+            lambda _: self.set_src_quality(self.src_quality_combo.currentData()))
+        head.addWidget(self.src_quality_combo)
+        v.addLayout(head)
         v.addLayout(self.src_viewer_holder, 1)
         self.source_bar = SourceBar()
         v.addWidget(self.source_bar)
@@ -263,7 +354,7 @@ class MainWindow(QMainWindow):
             return b
 
         r1 = QHBoxLayout()
-        r1.setSpacing(3)
+        r1.setSpacing(4)
         btn(r1, "◀◀", "Indietro (J)", lambda: self._src(lambda: self.engine.shuttle(-1)), 36)
         self.src_play_btn = btn(r1, "▶", "Play / pausa (Spazio)", lambda: self._src(self.engine.toggle), 40)
         btn(r1, "▶▶", "Avanti veloce (L)", lambda: self._src(lambda: self.engine.shuttle(1)), 36)
@@ -275,22 +366,26 @@ class MainWindow(QMainWindow):
         self.src_dur.setStyleSheet("color:#888;")
         r1.addWidget(self.src_dur)
         r1.addStretch(1)
-        v.addLayout(r1)
-        r2 = QHBoxLayout()
-        r2.setSpacing(3)
+        r2 = r1
+        r2.addSpacing(12)
         btn(r2, "I", "Ingresso (I)", lambda: self._src(self.mark_in), 30)
         btn(r2, "O", "Uscita (O)", lambda: self._src(self.mark_out), 30)
         btn(r2, "+ Parte", "Crea una parte dai segni I/O (Invio)", lambda: self._src(self.create_subclip))
         r2.addStretch(1)
         btn(r2, "Accoda ⤵", "Accoda alla timeline (E)", self.append_selected)
         btn(r2, "Alla testina", "Inserisci alla testina della timeline (F9)", self.insert_at_playhead)
-        v.addLayout(r2)
+        v.addLayout(r1)
         return w
+
+    def set_src_quality(self, q):
+        self.engine.src_quality = q
+        self.cfg["src_quality"] = q
+        self.engine.invalidate_source(None)
 
     def _bin_hover(self, rid, frac):
         """Passando il mouse sulla lista, il visore piccolo mostra la clip sotto
         al puntatore (da sinistra a destra = dall'inizio alla fine)."""
-        if self.engine.playing:
+        if self.engine.playing or self.page != PAGE_CLIP:
             return
         if not rid:
             back = getattr(self, "_hover_back", None)
@@ -333,6 +428,8 @@ class MainWindow(QMainWindow):
 
     def _tl(self, fn):
         """Comandi del visore grande: agiscono sempre sulla timeline."""
+        if self.page != PAGE_MONTAGE:
+            self.set_page(PAGE_MONTAGE)
         if self.engine.mode != "timeline":
             self.set_viewer_mode("timeline")
         fn()
@@ -358,7 +455,7 @@ class MainWindow(QMainWindow):
                 v = None
         if v is None:
             v = CpuViewer()
-        v.setMinimumSize(160, 90)
+        v.setMinimumSize(200, 112)
         return v
 
     def _make_viewer(self, gpu: bool):
@@ -470,8 +567,6 @@ class MainWindow(QMainWindow):
         act(m, "Inizio", lambda: self.engine.seek(0), "Home")
         act(m, "Fine", lambda: self.engine.seek(self.engine.duration()), "End")
         m.addSeparator()
-        act(m, "Comandi sulla clip (visore piccolo)", self.show_current_source, "Ctrl+1")
-        act(m, "Comandi sulla timeline (visore grande)", lambda: self.set_viewer_mode("timeline"), "Ctrl+2")
 
         m = mb.addMenu("Timeline")
         self.act_snap = act(m, "Aggancio", lambda on: self.timeline.btn_snap.setChecked(on), "N",
@@ -540,7 +635,11 @@ class MainWindow(QMainWindow):
 
         self.act_column = act(m, "Mostra la colonna (clip, effetti, colore)", self.set_column_visible, "Ctrl+L",
                               checkable=True, checked=True)
-        act(m, "Scheda Clip", lambda: self.show_tab(TAB_CLIP), "Ctrl+3")
+        act(m, "Progetti", lambda: self.set_page(PAGE_PROJECTS), "Ctrl+Shift+1")
+        act(m, "Clip", lambda: self.set_page(PAGE_CLIP), "Ctrl+Shift+2")
+        act(m, "Montaggio", lambda: self.set_page(PAGE_MONTAGE), "Ctrl+Shift+3")
+        m.addSeparator()
+        act(m, "Scheda Clip (montaggio)", lambda: self.show_tab(TAB_CLIP), "Ctrl+3")
         act(m, "Scheda Effetti (velocità, inquadratura, dissolvenze, scritte, riquadri)",
             lambda: self.show_tab(TAB_EFFECTS), "Ctrl+4")
         act(m, "Scheda Colore", lambda: self.show_tab(TAB_COLOR), "Ctrl+5")
@@ -577,6 +676,13 @@ class MainWindow(QMainWindow):
                 a.setIcon(icons.icon(ic))
                 a.setToolTip(tip)
                 tb.addAction(a)
+        left = QWidget()
+        left.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        right = QWidget()
+        right.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        tb.addWidget(left)
+        tb.addWidget(self._build_page_bar())
+        tb.addWidget(right)
         tb.setStyleSheet("QToolBar { background: #1a1b1d; border: none; spacing: 2px; padding: 3px 6px; }"
                          "QToolButton { padding: 4px; border: none; background: transparent; }"
                          "QToolButton:hover { background: #34363a; border-radius: 4px; }"
@@ -588,20 +694,8 @@ class MainWindow(QMainWindow):
         self.act_redo.setEnabled(self.project.can_redo())
 
     def show_welcome(self):
-        """Schermata dei progetti (all'avvio e dal pulsante «Progetti»)."""
-        d = WelcomeDialog(self.cfg, self.project.path, self)
-        ok = d.exec()
-        self._save_cfg()  # cartella dei progetti, rinomine, eliminazioni
-        self._fill_recent()
-        if not ok:
-            return
-        kind, path = d.choice
-        if kind == "open":
-            self.open_project(path)
-        elif kind == "browse":
-            self.open_project()
-        elif kind == "new":
-            self.create_project(path)
+        """Scheda PROGETTI (all'avvio e dall'icona «Progetti»)."""
+        self.set_page(PAGE_PROJECTS)
 
     def create_project(self, path):
         """Nuovo progetto già salvato nella cartella scelta."""
@@ -619,6 +713,7 @@ class MainWindow(QMainWindow):
             self._remember_recent(path)
         self.refresh_all([])
         self.statusBar().showMessage(f"Nuovo progetto: {os.path.basename(path)}", 4000)
+        self._after_project_loaded()
 
     def _save_cfg(self):
         try:
@@ -807,6 +902,9 @@ class MainWindow(QMainWindow):
         if src is None:
             return
         self.selected_ref = ref
+        if self.page != PAGE_CLIP:  # nel montaggio l'elenco serve solo a scegliere e trascinare
+            self._update_name_label()
+            return
         self.set_viewer_mode("source", src["id"])
         sub = self.project.subclip(ref)
         if sub and not (sub["in"] - 1e-6 <= self.engine.position <= sub["out"] + 1e-6):
@@ -1372,12 +1470,15 @@ class MainWindow(QMainWindow):
                                      "Correzione colore spenta nell'anteprima (l'export la usa comunque)", 3000)
 
     def set_column_visible(self, on):
-        self.side_dock.setVisible(on)
+        self.right_tabs.setVisible(on)
+        if self.act_column.isChecked() != on:
+            self.act_column.setChecked(on)
 
     def show_tab(self, index):
         """Mostra il pannello Effetti (0) o Colore (1), anche se era stato chiuso o staccato."""
-        self.side_dock.show()
-        self.side_dock.raise_()
+        if self.page != PAGE_MONTAGE:
+            self.set_page(PAGE_MONTAGE)
+        self.set_column_visible(True)
         self.right_tabs.setCurrentIndex(index)
 
     def _update_settings_label(self):
@@ -2028,6 +2129,7 @@ class MainWindow(QMainWindow):
         self.project = Project()
         self._reset_state()
         self.refresh_all([])
+        self.set_page(PAGE_CLIP)
 
     def open_project(self, path=None, recover_from=None):
         """recover_from: file di autosalvataggio da cui ripartire (dopo una
@@ -2078,6 +2180,7 @@ class MainWindow(QMainWindow):
                     self._reload_media()
                     self.refresh_all([])
                     self.statusBar().showMessage(f"Ricollegati {n} file su {len(missing)}.", 6000)
+        self._after_project_loaded()
 
     def save(self):
         if not self.project.path:

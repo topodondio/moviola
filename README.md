@@ -5,7 +5,7 @@ Pensato per chi viene dalla fotografia: si lavora "a clip" e il colore si
 corregge con comandi fotografici (esposizione, contrasto, bilanciamento del
 bianco, curva, HSL per colore), senza nodi.
 
-> Stato: **prototipo 0.9**. Le funzioni base ci sono tutte; da collaudare
+> Stato: **prototipo 0.10**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
 ## Avvio
@@ -36,23 +36,29 @@ sopra col mouse): nuovo, apri, salva, recenti · annulla, ripeti · importa,
 esporta. Le impostazioni del progetto stanno nel pulsante sopra la timeline.
 
 ```
-┌───────────────────────────┬──────────────────────────────────────┐
-│ CLIP │ EFFETTI │ COLORE   │  VISORE GRANDE: sempre la timeline    │
-├───────────────────────────┤                                      │
-│ [visore piccolo: clip]    │                                      │
-│ barra con le parti        │  ⏮ ◀◀ ▶ ▶▶ ⏭   timecode               │
-│ ◀◀ ▶ ▶▶  I O + Parte      ├──────────────────────────────────────┤
-├───────────────────────────┤  TIMELINE   V3 V2 V1  │  A1 A2 A3     │
-│ CLIP  + Video + ♪ Audio   │                                      │
-│  clip1 / clip1.1 …        │                                      │
-│  ♪ clip3 (musica)         │                                      │
-└───────────────────────────┴──────────────────────────────────────┘
+   PROGETTI          CLIP                         MONTAGGIO
+┌──────────────┬──────────────────────────────────────────────────────┐
+│ ▸ Neve 2026  │  [ visore grande della clip ]                       │
+│   clip1      │                                                     │
+│    clip1.1   │  barra con le parti colorate                        │
+│ ▸ Mare       │  ◀◀ ▶ ▶▶  timecode   I  O  + Parte  Accoda  Testina  │
+└──────────────┴──────────────────────────────────────────────────────┘
 ```
 
-La colonna a sinistra ha tre schede, scelte con le linguette in alto:
-**CLIP** (in alto un piccolo visore per guardare le clip singole e
-sceglierne le parti, sotto l'elenco di clip video e musica), **EFFETTI** e
-**COLORE**. Il visore grande mostra sempre la timeline; il pulsante **FX** in alto a
+Il programma ha **tre schede principali**, al centro della barra in alto
+(anche Ctrl/Cmd+Maiusc+1, 2, 3):
+
+1. **PROGETTI** – l'archivio dei progetti (vedi più sotto).
+2. **CLIP** – la fase di selezione: a sinistra l'elenco delle clip
+   **raggruppate per cartella** del disco, a destra un **visore grande** con
+   la barra delle parti e i comandi I, O, + Parte, Accoda, Alla testina. Il
+   menu «Anteprima» in alto a destra abbassa la qualità per una riproduzione
+   più fluida (1/2, 1/3, 1/4).
+3. **MONTAGGIO** – timeline e visore della timeline; a sinistra una colonna
+   con CLIP (solo l'elenco, per trascinare in timeline), EFFETTI e COLORE,
+   che si stringe o si nasconde (icona in alto o Ctrl/Cmd+L).
+
+Il visore grande mostra sempre la timeline; il pulsante **FX** in alto a
 destra (Ctrl/Cmd+Maiusc+F) spegne e riaccende la **correzione colore**
 nell'anteprima (arancione = accesa, grigio = spenta), per confrontare con
 l'originale; dissolvenze, transizioni, zoom, posizione e bande restano, e

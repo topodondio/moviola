@@ -74,7 +74,8 @@ class Engine(QObject):
         self.position = 0.0
         self.source_positions: dict[str, float] = {}
         self.speed = 0.0
-        self.quality = "meta"
+        self.quality = "meta"  # anteprima della timeline
+        self.src_quality = "meta"  # anteprima delle clip (scheda CLIP)
         self.cpu_grade = False  # True se la scheda video non è disponibile
         self.bypass = False  # prima/dopo
         self.fx_off = False  # correzione colore spenta nell'anteprima (pulsante FX)
@@ -479,6 +480,7 @@ class Engine(QObject):
         src = pr.source(self.source_id)
         if src is None or not src.get("has_video"):
             return Frame(t, None, label=src["id"] if src else "")
+        h = preview_height(int(src.get("height") or pr.size[1]), self.src_quality)
         fs = self.pool.get(self.path_for(src, h))
         if fs is None:
             return Frame(t, None, label=src["id"] + " (file non trovato)")

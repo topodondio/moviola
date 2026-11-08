@@ -12,7 +12,7 @@ import os
 
 from PySide6.QtCore import QItemSelectionModel, QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QIcon, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QStyle, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 
@@ -59,6 +59,7 @@ def _tag_row(item, tag):
 
 
 GREEN, RED = TAGS[0][1], TAGS[3][1]
+FOLDER = "cartella:"
 FILTERS = [("Tutte le clip", "all"), ("Solo le verdi", "green"), ("Nascondi le rosse", "nored"),
            ("Non ancora usate", "unused")]
 
@@ -94,7 +95,8 @@ class BinTree(QTreeWidget):
             h.setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
     def selected_ids(self):
-        return [it.data(0, Qt.UserRole) for it in self.selectedItems()]
+        out = [it.data(0, Qt.UserRole) for it in self.selectedItems()]
+        return [x for x in out if x and not str(x).startswith(FOLDER)]
 
     def mouseMoveEvent(self, e):
         super().mouseMoveEvent(e)
@@ -102,6 +104,8 @@ class BinTree(QTreeWidget):
             return
         it = self.itemAt(e.position().toPoint())
         rid = it.data(0, Qt.UserRole) if it is not None else ""
+        if str(rid).startswith(FOLDER):
+            rid = ""
         frac = min(1.0, max(0.0, e.position().x() / max(1, self.viewport().width())))
         if rid or self._hover_id:
             self._hover_id = rid
@@ -171,6 +175,7 @@ class BinPanel(QWidget):
         self._items: dict[str, QTreeWidgetItem] = {}
         self._status: dict[str, str] = {}
         self._src_names: dict[str, tuple] = {}
+        self._known_folders: set[str] = set()
         self._icons: dict[str, QIcon] = {}
         self._block = False
         self._active = self.tree
@@ -206,7 +211,9 @@ class BinPanel(QWidget):
         tree.itemSelectionChanged.connect(lambda t=tree: self._sel(t))
         tree.customContextMenuRequested.connect(lambda pos, t=tree: self._menu(t, pos))
         tree.files_dropped.connect(self.import_files)
-        tree.itemDoubleClicked.connect(lambda it, c: self.request.emit("append", [it.data(0, Qt.UserRole)]))
+        tree.itemDoubleClicked.connect(
+            lambda it, c: None if str(it.data(0, Qt.UserRole)).startswith(FOLDER)
+            else self.request.emit("append", [it.data(0, Qt.UserRole)]))
         return tree, w
 
     # ------------------------------------------------------------------
@@ -228,11 +235,33 @@ class BinPanel(QWidget):
         used_subs = {i.get("origin") for i in project.items}
         used_srcs = {i.get("source") for i in project.items}
         self._meta = {}  # id -> (etichetta, usata, id della clip intera)
+        # le clip sono raggruppate per cartella del disco (come sono archiviate)
+        folders = {}
+        for src in ordered:
+            d = os.path.dirname(src["path"])
+            if d not in folders:
+                fid = FOLDER + d
+                fit = QTreeWidgetItem([os.path.basename(d) or d, "", ""])
+                fit.setData(0, Qt.UserRole, fid)
+                fit.setToolTip(0, d)
+                fit.setIcon(0, self.style().standardIcon(QStyle.SP_DirIcon))
+                fit.setForeground(0, QColor(232, 163, 61))
+                ff = fit.font(0)
+                ff.setBold(True)
+                fit.setFont(0, ff)
+                fit.setFlags(fit.flags() & ~Qt.ItemIsDragEnabled)
+                self._tree_for(src).addTopLevelItem(fit)
+                self._items[fid] = fit
+                folders[d] = fit
+        for d, fit in folders.items():
+            n = sum(1 for x in ordered if os.path.dirname(x["path"]) == d)
+            fit.setText(1, f"{n} clip")
+            fit.setExpanded(first or FOLDER + d in expanded or FOLDER + d not in self._known_folders)
+            self._known_folders.add(FOLDER + d)
         for src in ordered:
             if not src.get("has_video"):
                 self._audio_ids.add(src["id"])
                 self._audio_ids.update(c["id"] for c in project.subclips_of(src["id"]))
-            tree = self._tree_for(src)
             missing = not os.path.exists(src["path"])
             mark = "" if src.get("has_video") else "♪ "
             top = QTreeWidgetItem(["", fmt_dur(src["duration"]), ""])
@@ -252,7 +281,7 @@ class BinPanel(QWidget):
             f = top.font(0)
             f.setBold(True)
             top.setFont(0, f)
-            tree.addTopLevelItem(top)
+            folders[os.path.dirname(src["path"])].addChild(top)
             for sub in project.subclips_of(src["id"]):
                 lab = sub["id"] + (f"   {sub['label']}" if sub.get("label") else "")
                 ch = QTreeWidgetItem([lab, fmt_dur(sub["out"] - sub["in"]),
@@ -299,12 +328,17 @@ class BinPanel(QWidget):
             if meta.get(rid, (None, False, None))[2] is not None:
                 it.setHidden(not ok(rid))
         for rid, it in self._items.items():
+            if str(rid).startswith(FOLDER):
+                continue
             if meta.get(rid, (None, False, None))[2] is None:
                 kids = [it.child(k) for k in range(it.childCount())]
                 show = ok(rid) or any(not k.isHidden() for k in kids)
                 if mode == "nored" and meta.get(rid, (None,))[0] == RED:
                     show = False
                 it.setHidden(not show)
+        for rid, it in self._items.items():
+            if str(rid).startswith(FOLDER):
+                it.setHidden(all(it.child(k).isHidden() for k in range(it.childCount())))
 
     def update_subclip(self, sub):
         it = self._items.get(sub["id"])
@@ -371,7 +405,7 @@ class BinPanel(QWidget):
         ids = self.selected_ids()
         self.selection_changed.emit(ids)
         cur = tree.currentItem()
-        if cur is not None and cur.isSelected():
+        if cur is not None and cur.isSelected() and not str(cur.data(0, Qt.UserRole)).startswith(FOLDER):
             self.current_changed.emit(cur.data(0, Qt.UserRole))
         elif ids:
             self.current_changed.emit(ids[-1])
@@ -380,7 +414,8 @@ class BinPanel(QWidget):
         ids = tree.selected_ids()
         it = tree.itemAt(pos)
         if it is not None and it.data(0, Qt.UserRole) not in ids:
-            ids = [it.data(0, Qt.UserRole)]
+            rid = it.data(0, Qt.UserRole)
+            ids = [] if str(rid).startswith(FOLDER) else [rid]
         audio = bool(ids) and all(i in self._audio_ids for i in ids)
         m = QMenu(self)
         if ids:

@@ -7,10 +7,10 @@ import json
 import os
 import shutil
 
-from PySide6.QtCore import QSize, Qt, QUrl
+from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPixmap
-from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-                               QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout)
+from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QInputDialog, QLabel, QListWidget,
+                               QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
 from .. import media
 from .. import speed as spd
@@ -66,19 +66,19 @@ def _project_info(path):
     return txt, thumb, missing
 
 
-class WelcomeDialog(QDialog):
-    """Al termine self.choice è ('open', percorso), ('new', percorso da creare),
-    ('browse', None) oppure ('empty', None)."""
+class ProjectsPanel(QWidget):
+    """Scheda PROGETTI. Emette chosen(tipo, percorso): ('open', percorso),
+    ('new', percorso da creare), ('browse', '')."""
 
-    def __init__(self, cfg, current_path=None, parent=None):
+    chosen = Signal(str, str)
+    changed = Signal()  # cartella, rinomine, eliminazioni: impostazioni da salvare
+
+    def __init__(self, cfg, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Progetti")
-        self.setMinimumSize(720, 520)
         self.cfg = cfg
-        self.current = os.path.abspath(current_path) if current_path else None
-        self.choice = ("empty", None)
+        self.current = None
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(22, 18, 22, 18)
+        lay.setContentsMargins(40, 24, 40, 20)
         head = QHBoxLayout()
         title = QLabel("Moviola")
         title.setStyleSheet("font-size: 26px; font-weight: 700; color: #e8a33d;")
@@ -117,7 +117,7 @@ class WelcomeDialog(QDialog):
         row.addWidget(self.b_open)
         lay.addLayout(row)
         b_new.clicked.connect(self._new)
-        b_browse.clicked.connect(lambda: self._done(("browse", None)))
+        b_browse.clicked.connect(lambda: self._done(("browse", "")))
         self.b_open.clicked.connect(self._open_current)
         self.b_dup.clicked.connect(self._duplicate)
         self.b_ren.clicked.connect(self._rename)
@@ -222,6 +222,7 @@ class WelcomeDialog(QDialog):
         d = QFileDialog.getExistingDirectory(self, "Cartella dei progetti", self.folder or os.path.expanduser("~"))
         if d:
             self.cfg["projects_dir"] = d
+            self.changed.emit()
             self._fill()
 
     def _ask_name(self, title, default):
@@ -237,6 +238,7 @@ class WelcomeDialog(QDialog):
             if not d:
                 return
             self.cfg["projects_dir"] = folder = d
+            self.changed.emit()
         name = self._ask_name("Nuovo progetto", datetime.date.today().strftime("Montaggio %Y-%m-%d"))
         if not name:
             return
@@ -285,6 +287,7 @@ class WelcomeDialog(QDialog):
         os.rename(p, dst)
         self.cfg["recent"] = [dst if os.path.abspath(r) == os.path.abspath(p) else r
                               for r in self.cfg.get("recent", [])]
+        self.changed.emit()
         self._fill(select=dst)
 
     def _delete(self):
@@ -302,6 +305,7 @@ class WelcomeDialog(QDialog):
             QMessageBox.warning(self, "Elimina", "Non sono riuscito a spostarlo nel Cestino.")
             return
         self.cfg["recent"] = [r for r in self.cfg.get("recent", []) if os.path.abspath(r) != os.path.abspath(p)]
+        self.changed.emit()
         self._fill()
 
     def _show(self):
@@ -309,6 +313,12 @@ class WelcomeDialog(QDialog):
         if p:
             QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(p)))
 
+    def set_current(self, path):
+        self.current = os.path.abspath(path) if path else None
+
+    def refresh(self):
+        sel = self._sel_path()
+        self._fill(select=sel)
+
     def _done(self, choice):
-        self.choice = choice
-        self.accept()
+        self.chosen.emit(choice[0], choice[1] or "")
