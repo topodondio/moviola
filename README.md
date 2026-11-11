@@ -77,6 +77,21 @@ per esempio con un doppio clic su un pezzo).
    come per i video e in timeline vanno da soli sull'**ultima traccia audio**
    (A3), la traccia della musica; trascinandoli su un'altra traccia audio
    restano dove li lasci.
+
+   **Cartelle**: con l'icona della cartella col «+» accanto ai pulsanti di
+   importazione (o Ctrl/Cmd+Maiusc+N, o tasto destro → Nuova cartella) crei
+   cartelle tue, per esempio «Musica», «Interviste», «Drone»; se hai delle
+   clip selezionate ci entrano subito. Le cartelle stanno in alto nella
+   lista; le clip non ancora sistemate restano sotto, raggruppate per
+   cartella del disco. Per riordinare **trascina** clip (o parti: si sposta
+   la clip intera) sopra una cartella, oppure tasto destro → Sposta in
+   cartella. Si possono fare cartelle dentro altre cartelle (trascinandole o
+   con «Nuova cartella qui dentro…»). Se importi con una cartella
+   selezionata, o trascini i file dal Finder/Esplora risorse sopra una
+   cartella, i file nuovi finiscono lì. Doppio clic o F2 sulla cartella per
+   rinominarla; eliminandola le clip non si perdono (tornano fuori) e
+   Annulla la ripristina. Le cartelle esistono solo nel progetto: i file sul
+   disco non vengono spostati.
 2. **Scegli le parti**: seleziona una clip, scorri con J/K/L o le frecce,
    segna **I** (ingresso) e **O** (uscita), premi **Invio** (o M).
    Nasce `clip1.1`, poi `clip1.2`, … I numeri non cambiano mai, anche se

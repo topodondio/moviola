@@ -1,9 +1,14 @@
-"""Scheda "Clip": clip intere e parti selezionate, organizzate ad albero,
-in due sezioni (video, audio/musica).
+"""Scheda "Clip": clip intere e parti selezionate, organizzate ad albero.
 
-clip1 (file originale)
-  ├ clip1.1
-  └ clip1.2
+In alto le cartelle create dall'utente (anche una dentro l'altra), sotto le
+clip non ancora sistemate, raggruppate per cartella del disco.
+
+Musica/
+  clip4 (♪)
+Autunno (disco)/
+  clip1 (file originale)
+    ├ clip1.1
+    └ clip1.2
 """
 from __future__ import annotations
 
@@ -11,7 +16,7 @@ import json
 import os
 
 from PySide6.QtCore import QItemSelectionModel, QMimeData, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QIcon, QPixmap
+from PySide6.QtGui import QColor, QDrag, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QStyle, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -59,13 +64,19 @@ def _tag_row(item, tag):
 
 
 GREEN, RED = TAGS[0][1], TAGS[3][1]
-FOLDER = "cartella:"
+FOLDER = "cartella:"  # cartella del disco (raggruppamento automatico)
+USERBIN = "raccoglitore:"  # cartella creata dall'utente
+MIME_BINS = "application/x-moviola-bins"
+
+
+def _is_group(rid) -> bool:
+    return str(rid).startswith((FOLDER, USERBIN))
 FILTERS = [("Tutte le clip", "all"), ("Solo le verdi", "green"), ("Nascondi le rosse", "nored"),
            ("Non ancora usate", "unused")]
 
 
 class BinTree(QTreeWidget):
-    files_dropped = Signal(list)
+    files_dropped = Signal(list, object)  # file, cartella di arrivo
     hover = Signal(str, float)  # clip sotto al mouse ("" = uscito) e posizione 0..1 nella riga
 
     def __init__(self, parent=None):
@@ -94,9 +105,24 @@ class BinTree(QTreeWidget):
         for i in (1, 2):
             h.setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
+    moved = Signal(list, list, object)  # clip, cartelle, cartella di arrivo (None = fuori)
+
     def selected_ids(self):
         out = [it.data(0, Qt.UserRole) for it in self.selectedItems()]
-        return [x for x in out if x and not str(x).startswith(FOLDER)]
+        return [x for x in out if x and not _is_group(x)]
+
+    def selected_bins(self):
+        out = [it.data(0, Qt.UserRole) for it in self.selectedItems()]
+        return [str(x)[len(USERBIN):] for x in out if str(x).startswith(USERBIN)]
+
+    def bin_at(self, item):
+        """Cartella dell'utente in cui sta una riga (None = fuori dalle cartelle)."""
+        while item is not None:
+            rid = str(item.data(0, Qt.UserRole))
+            if rid.startswith(USERBIN):
+                return rid[len(USERBIN):]
+            item = item.parent()
+        return None
 
     def mouseMoveEvent(self, e):
         super().mouseMoveEvent(e)
@@ -104,7 +130,7 @@ class BinTree(QTreeWidget):
             return
         it = self.itemAt(e.position().toPoint())
         rid = it.data(0, Qt.UserRole) if it is not None else ""
-        if str(rid).startswith(FOLDER):
+        if _is_group(rid):
             rid = ""
         frac = min(1.0, max(0.0, e.position().x() / max(1, self.viewport().width())))
         if rid or self._hover_id:
@@ -119,32 +145,90 @@ class BinTree(QTreeWidget):
 
     def startDrag(self, actions):
         ids = self.selected_ids()
-        if not ids:
+        bins = self.selected_bins()
+        if not ids and not bins:
             return
         mime = QMimeData()
-        mime.setData(MIME, json.dumps(ids).encode())
-        mime.setText(", ".join(ids))
+        if ids:
+            mime.setData(MIME, json.dumps(ids).encode())
+            mime.setText(", ".join(ids))
+        if bins:
+            mime.setData(MIME_BINS, json.dumps(bins).encode())
         drag = QDrag(self)
         drag.setMimeData(mime)
         drag.exec(Qt.CopyAction)
+        self._set_drop_target(None)
+
+    # trascinando dentro la lista: le clip (e le cartelle) cambiano cartella
+    def _internal(self, e):
+        md = e.mimeData()
+        return e.source() is self and (md.hasFormat(MIME) or md.hasFormat(MIME_BINS))
+
+    def _drop_item(self, e):
+        """Riga su cui si lascia: la cartella che la contiene, oppure la riga
+        del raggruppamento per disco (= fuori dalle cartelle)."""
+        it = self.itemAt(e.position().toPoint())
+        while it is not None and not _is_group(it.data(0, Qt.UserRole)):
+            it = it.parent()
+        return it
+
+    def _set_drop_target(self, it):
+        if getattr(self, "_drop_target", None) is not it:
+            self._drop_target = it
+            self.viewport().update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        it = getattr(self, "_drop_target", None)
+        if it is None:
+            return
+        r = self.visualItemRect(it)
+        if r.isNull():
+            return
+        r.setLeft(0)
+        r.setRight(self.viewport().width() - 1)
+        p = QPainter(self.viewport())
+        p.setPen(QPen(QColor(232, 163, 61), 2))
+        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 4, 4)
+        p.end()
 
     def dragEnterEvent(self, e):
-        if e.mimeData().hasUrls():
+        if e.mimeData().hasUrls() or self._internal(e):
             e.acceptProposedAction()
         else:
             e.ignore()
 
     def dragMoveEvent(self, e):
-        if e.mimeData().hasUrls():
+        if self._internal(e):
+            it = self._drop_item(e)
+            self._set_drop_target(it if it is not None and str(it.data(0, Qt.UserRole)).startswith(USERBIN)
+                                  else None)
+            e.acceptProposedAction()
+        elif e.mimeData().hasUrls():
+            it = self._drop_item(e)
+            self._set_drop_target(it if it is not None and str(it.data(0, Qt.UserRole)).startswith(USERBIN)
+                                  else None)
             e.acceptProposedAction()
         else:
             e.ignore()
 
+    def dragLeaveEvent(self, e):
+        self._set_drop_target(None)
+        super().dragLeaveEvent(e)
+
     def dropEvent(self, e):
-        if e.mimeData().hasUrls():
-            paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        target = self.bin_at(self._drop_item(e))
+        self._set_drop_target(None)
+        md = e.mimeData()
+        if self._internal(e):
+            ids = json.loads(bytes(md.data(MIME)).decode()) if md.hasFormat(MIME) else []
+            bins = json.loads(bytes(md.data(MIME_BINS)).decode()) if md.hasFormat(MIME_BINS) else []
             e.acceptProposedAction()
-            self.files_dropped.emit(paths)
+            self.moved.emit(ids, bins, target)
+        elif md.hasUrls():
+            paths = [u.toLocalFile() for u in md.urls() if u.isLocalFile()]
+            e.acceptProposedAction()
+            self.files_dropped.emit(paths, target)
         else:
             e.ignore()
 
@@ -155,7 +239,7 @@ class BinPanel(QWidget):
     selection_changed = Signal(list)  # id selezionati
     current_changed = Signal(str)  # id da mostrare nel visore
     request = Signal(str, list)  # azione, id
-    import_files = Signal(list)
+    import_files = Signal(list, object)  # file, cartella di arrivo (o None)
     hover = Signal(str, float)
 
     def __init__(self, parent=None):
@@ -165,9 +249,10 @@ class BinPanel(QWidget):
         lay.setSpacing(4)
         self.tree, w = self._section("CLIP", [
             ("+ Video", "import", "Importa clip video (Ctrl/Cmd+I).\nPuoi anche trascinare file o cartelle qui."),
-            ("+ Cartella", "import_folder", "Importa tutta una cartella"),
             ("+ ♪ Audio", "import_audio", "Importa musica o suoni (mp3, wav, m4a, aiff…).\n"
-                                         "In timeline vanno sull'ultima traccia audio.")])
+                                         "In timeline vanno sull'ultima traccia audio."),
+            ("+ Da cartella", "import_folder", "Importa tutti i video e gli audio di una cartella del disco")],
+            new_bin=True)
         lay.addWidget(w, 1)
         self.audio_tree = self.tree
         self.trees = (self.tree,)
@@ -180,7 +265,7 @@ class BinPanel(QWidget):
         self._block = False
         self._active = self.tree
 
-    def _section(self, title, buttons):
+    def _section(self, title, buttons, new_bin=False):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
@@ -204,6 +289,16 @@ class BinPanel(QWidget):
             b.clicked.connect(lambda _=False, r=req: self.request.emit(r, []))
             row.addWidget(b)
         row.addStretch(1)
+        if new_bin:
+            nb = QPushButton()
+            nb.setIcon(_new_folder_icon())
+            nb.setFixedWidth(34)
+            nb.setToolTip("Nuova cartella (Ctrl/Cmd+Maiusc+N)\n"
+                          "Le clip selezionate ci entrano subito. Poi trascina le clip\n"
+                          "sulle cartelle per riordinarle; si possono fare cartelle\n"
+                          "dentro altre cartelle.")
+            nb.clicked.connect(lambda: self.request.emit("new_bin", self.selected_ids()))
+            row.addWidget(nb)
         v.addLayout(row)
         tree = BinTree()
         tree.hover.connect(self.hover)
@@ -211,9 +306,10 @@ class BinPanel(QWidget):
         tree.itemSelectionChanged.connect(lambda t=tree: self._sel(t))
         tree.customContextMenuRequested.connect(lambda pos, t=tree: self._menu(t, pos))
         tree.files_dropped.connect(self.import_files)
-        tree.itemDoubleClicked.connect(
-            lambda it, c: None if str(it.data(0, Qt.UserRole)).startswith(FOLDER)
-            else self.request.emit("append", [it.data(0, Qt.UserRole)]))
+        tree.moved.connect(self._moved)
+        tree.itemDoubleClicked.connect(self._double_clicked)
+        tree.itemExpanded.connect(lambda it: self._remember_open(it, True))
+        tree.itemCollapsed.connect(lambda it: self._remember_open(it, False))
         return tree, w
 
     # ------------------------------------------------------------------
@@ -222,6 +318,7 @@ class BinPanel(QWidget):
 
     def rebuild(self, project, select=None):
         self._block = True
+        self._project = project
         expanded = {k for k, it in self._items.items() if it.isExpanded()}
         selected = set(select) if select is not None else set(self.selected_ids())
         first = not self._items
@@ -235,29 +332,62 @@ class BinPanel(QWidget):
         used_subs = {i.get("origin") for i in project.items}
         used_srcs = {i.get("source") for i in project.items}
         self._meta = {}  # id -> (etichetta, usata, id della clip intera)
-        # le clip sono raggruppate per cartella del disco (come sono archiviate)
+        bins = {b["id"]: b for b in project.bins}
+        self._bins = bins
+
+        # 1) cartelle create dall'utente, in alto e in ordine alfabetico
+        bin_items = {}
+
+        def make_bin(b):
+            if b["id"] in bin_items:
+                return bin_items[b["id"]]
+            bit = QTreeWidgetItem([b["name"], "", ""])
+            bid = USERBIN + b["id"]
+            bit.setData(0, Qt.UserRole, bid)
+            bit.setIcon(0, _user_folder_icon())
+            bit.setToolTip(0, "Cartella del progetto: trascina qui clip e musica.\n"
+                              "Tasto destro per rinominarla o eliminarla.")
+            f = bit.font(0)
+            f.setBold(True)
+            bit.setFont(0, f)
+            bit.setForeground(0, QColor(236, 236, 236))
+            parent = bins.get(b.get("parent"))
+            if parent is not None and parent["id"] != b["id"]:
+                make_bin(parent).addChild(bit)
+            else:
+                self.tree.addTopLevelItem(bit)
+            bin_items[b["id"]] = bit
+            self._items[bid] = bit
+            return bit
+
+        for b in sorted(bins.values(), key=lambda x: x["name"].lower()):
+            make_bin(b)
+
+        # 2) le altre clip raggruppate per cartella del disco (come sono archiviate)
+        loose = [x for x in ordered if x.get("bin") not in bins]
         folders = {}
-        for src in ordered:
+        for src in loose:
             d = os.path.dirname(src["path"])
             if d not in folders:
                 fid = FOLDER + d
                 fit = QTreeWidgetItem([os.path.basename(d) or d, "", ""])
                 fit.setData(0, Qt.UserRole, fid)
-                fit.setToolTip(0, d)
+                fit.setToolTip(0, d + "\n(cartella del disco: trascina le clip su una tua cartella per spostarle)")
                 fit.setIcon(0, self.style().standardIcon(QStyle.SP_DirIcon))
                 fit.setForeground(0, QColor(232, 163, 61))
                 ff = fit.font(0)
                 ff.setBold(True)
                 fit.setFont(0, ff)
                 fit.setFlags(fit.flags() & ~Qt.ItemIsDragEnabled)
-                self._tree_for(src).addTopLevelItem(fit)
+                self.tree.addTopLevelItem(fit)
                 self._items[fid] = fit
                 folders[d] = fit
         for d, fit in folders.items():
-            n = sum(1 for x in ordered if os.path.dirname(x["path"]) == d)
+            n = sum(1 for x in loose if os.path.dirname(x["path"]) == d)
             fit.setText(1, f"{n} clip")
             fit.setExpanded(first or FOLDER + d in expanded or FOLDER + d not in self._known_folders)
             self._known_folders.add(FOLDER + d)
+
         for src in ordered:
             if not src.get("has_video"):
                 self._audio_ids.add(src["id"])
@@ -281,7 +411,10 @@ class BinPanel(QWidget):
             f = top.font(0)
             f.setBold(True)
             top.setFont(0, f)
-            folders[os.path.dirname(src["path"])].addChild(top)
+            if src.get("bin") in bin_items:
+                bin_items[src["bin"]].addChild(top)
+            else:
+                folders[os.path.dirname(src["path"])].addChild(top)
             for sub in project.subclips_of(src["id"]):
                 lab = sub["id"] + (f"   {sub['label']}" if sub.get("label") else "")
                 ch = QTreeWidgetItem([lab, fmt_dur(sub["out"] - sub["in"]),
@@ -295,6 +428,15 @@ class BinPanel(QWidget):
                 self._items[sub["id"]] = ch
             top.setExpanded(first or src["id"] in expanded or any(s in selected for s in
                                                                   [c["id"] for c in project.subclips_of(src["id"])]))
+
+        # conteggio e apertura delle cartelle dell'utente (dopo aver messo le clip)
+        for bid, bit in bin_items.items():
+            n = sum(1 for x in ordered if x.get("bin") == bid)
+            sub = sum(1 for x in bins.values() if x.get("parent") == bid)
+            parts = ([f"{n} clip"] if n else []) + ([f"{sub} cart."] if sub else [])
+            bit.setText(1, " · ".join(parts) if parts else "vuota")
+            bit.setExpanded(bool(bins[bid].get("open", True)))
+
         for k in selected:
             if k in self._items:
                 self._items[k].setSelected(True)
@@ -339,6 +481,24 @@ class BinPanel(QWidget):
         for rid, it in self._items.items():
             if str(rid).startswith(FOLDER):
                 it.setHidden(all(it.child(k).isHidden() for k in range(it.childCount())))
+
+        def hide_empty_bins(it):
+            """Con un filtro attivo le cartelle senza niente da mostrare spariscono;
+            senza filtro restano tutte (anche quelle appena create, vuote)."""
+            visible = False
+            for k in range(it.childCount()):
+                ch = it.child(k)
+                if str(ch.data(0, Qt.UserRole)).startswith(USERBIN):
+                    visible = hide_empty_bins(ch) or visible
+                else:
+                    visible = visible or not ch.isHidden()
+            it.setHidden(mode != "all" and not visible)
+            return visible
+
+        for k in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(k)
+            if str(top.data(0, Qt.UserRole)).startswith(USERBIN):
+                hide_empty_bins(top)
 
     def update_subclip(self, sub):
         it = self._items.get(sub["id"])
@@ -405,22 +565,87 @@ class BinPanel(QWidget):
         ids = self.selected_ids()
         self.selection_changed.emit(ids)
         cur = tree.currentItem()
-        if cur is not None and cur.isSelected() and not str(cur.data(0, Qt.UserRole)).startswith(FOLDER):
+        if cur is not None and cur.isSelected() and not _is_group(cur.data(0, Qt.UserRole)):
             self.current_changed.emit(cur.data(0, Qt.UserRole))
         elif ids:
             self.current_changed.emit(ids[-1])
 
+    def target_bin(self):
+        """Cartella dell'utente dove finiscono i file importati: quella
+        selezionata, o quella che contiene la clip selezionata."""
+        it = self.tree.currentItem()
+        if it is None or not it.isSelected():
+            return None
+        return self.tree.bin_at(it)
+
+    def _double_clicked(self, it, col):
+        rid = str(it.data(0, Qt.UserRole))
+        if rid.startswith(USERBIN):
+            self.request.emit("rename_bin:" + rid[len(USERBIN):], [])
+        elif not rid.startswith(FOLDER):
+            self.request.emit("append", [rid])
+
+    def _remember_open(self, it, state):
+        if self._block:
+            return
+        rid = str(it.data(0, Qt.UserRole))
+        if rid.startswith(USERBIN):
+            b = getattr(self, "_bins", {}).get(rid[len(USERBIN):])
+            if b is not None:
+                b["open"] = state  # solo come si presenta la lista: non serve salvare
+
+    def _moved(self, ids, bins, target):
+        if bins:
+            self.request.emit("move_bins:" + (target or ""), bins)
+        if ids:
+            self.request.emit("move_to_bin:" + (target or ""), ids)
+
+    def _bin_menu(self, m, ids, here):
+        """Sottomenu "Sposta in cartella" con tutte le cartelle (rientrate)."""
+        bins = getattr(self, "_bins", {})
+        sm = m.addMenu("Sposta in cartella")
+        sm.addAction(_new_folder_icon(), "Nuova cartella con queste clip…",
+                     lambda: self.request.emit("new_bin", ids))
+        if bins:
+            sm.addSeparator()
+
+            def add(parent, depth):
+                for b in sorted((x for x in bins.values() if x.get("parent") == parent),
+                                key=lambda x: x["name"].lower()):
+                    a = sm.addAction(_user_folder_icon(), "    " * depth + b["name"],
+                                     lambda bb=b["id"]: self.request.emit("move_to_bin:" + bb, ids))
+                    a.setEnabled(b["id"] != here)
+                    add(b["id"], depth + 1)
+            add(None, 0)
+        if here:
+            sm.addSeparator()
+            sm.addAction("Fuori dalle cartelle", lambda: self.request.emit("move_to_bin:", ids))
+
     def _menu(self, tree, pos):
         ids = tree.selected_ids()
         it = tree.itemAt(pos)
-        if it is not None and it.data(0, Qt.UserRole) not in ids:
-            rid = it.data(0, Qt.UserRole)
-            ids = [] if str(rid).startswith(FOLDER) else [rid]
-        audio = bool(ids) and all(i in self._audio_ids for i in ids)
+        rid = str(it.data(0, Qt.UserRole)) if it is not None else ""
         m = QMenu(self)
+        if rid.startswith(USERBIN):
+            bid = rid[len(USERBIN):]
+            m.addAction("Rinomina cartella…", lambda: self.request.emit("rename_bin:" + bid, []))
+            m.addAction(_new_folder_icon(), "Nuova cartella qui dentro…",
+                        lambda: self.request.emit("new_bin_in:" + bid, []))
+            m.addSeparator()
+            m.addAction("Importa clip video qui…", lambda: self.request.emit("import_in:" + bid, []))
+            m.addAction("Importa musica o suoni qui…", lambda: self.request.emit("import_audio_in:" + bid, []))
+            m.addSeparator()
+            m.addAction("Elimina cartella (le clip restano)", lambda: self.request.emit("delete_bin:" + bid, []))
+            m.exec(tree.viewport().mapToGlobal(pos))
+            return
+        if it is not None and rid not in ids:
+            ids = [] if _is_group(rid) else [rid]
+        audio = bool(ids) and all(i in self._audio_ids for i in ids)
         if ids:
             m.addAction("Accoda alla timeline\tE", lambda: self.request.emit("append", ids))
             m.addAction("Inserisci alla testina\tF9", lambda: self.request.emit("insert_playhead", ids))
+            m.addSeparator()
+            self._bin_menu(m, ids, tree.bin_at(it) if it is not None else None)
             m.addSeparator()
             m.addAction("Duplica\tCtrl+D", lambda: self.request.emit("duplicate", ids))
             m.addAction("Rinomina…\tF2", lambda: self.request.emit("rename", ids[:1]))
@@ -441,6 +666,53 @@ class BinPanel(QWidget):
             m.addAction("Ricollega file…", lambda: self.request.emit("relink", ids[:1]))
             m.addAction("Mostra il file nella cartella", lambda: self.request.emit("reveal", ids[:1]))
         else:
+            m.addAction(_new_folder_icon(), "Nuova cartella…", lambda: self.request.emit("new_bin", []))
+            m.addSeparator()
             m.addAction("Importa clip video…", lambda: self.request.emit("import", []))
             m.addAction("Importa musica o suoni…", lambda: self.request.emit("import_audio", []))
         m.exec(tree.viewport().mapToGlobal(pos))
+
+
+_ICONS = {}
+
+
+def _user_folder_icon():
+    """Cartella dell'utente: bianca, per distinguerla da quelle del disco."""
+    if "user" not in _ICONS:
+        _ICONS["user"] = QIcon(_folder_pixmap(QColor(225, 225, 225), plus=False))
+    return _ICONS["user"]
+
+
+def _new_folder_icon():
+    if "new" not in _ICONS:
+        _ICONS["new"] = QIcon(_folder_pixmap(QColor(235, 235, 235), plus=True))
+    return _ICONS["new"]
+
+
+def _folder_pixmap(col, plus):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QPainterPath
+    pm = QPixmap(64, 64)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(col, 4))
+    p.setBrush(Qt.NoBrush)
+    path = QPainterPath()
+    path.moveTo(6, 16)
+    path.lineTo(24, 16)
+    path.lineTo(30, 22)
+    path.lineTo(58, 22)
+    path.lineTo(58, 52)
+    path.lineTo(6, 52)
+    path.closeSubpath()
+    p.drawPath(path)
+    if plus:
+        p.setBrush(QColor(232, 163, 61))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(QRectF(36, 34, 26, 26))
+        p.setPen(QPen(QColor(30, 30, 30), 4))
+        p.drawLine(49, 40, 49, 54)
+        p.drawLine(42, 47, 56, 47)
+    p.end()
+    return pm

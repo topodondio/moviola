@@ -382,8 +382,39 @@ def test_cache_and_paths(tmp):
     print("cache e percorsi ok")
 
 
+def test_bins(tmp):
+    pr = P.Project()
+    a = pr.add_source("/x/a.mp4", info(10)); b = pr.add_source("/x/b.mp4", info(8))
+    m = pr.add_source("/x/song.mp3", {"duration": 60, "has_video": False, "has_audio": True})
+    pr.add_subclip("clip1", 1, 3)
+    musica = pr.add_bin("Musica"); sci = pr.add_bin("Sci")
+    assert pr.add_bin("Musica")["name"] == "Musica 2"  # nomi unici tra le sorelle
+    neve = pr.add_bin("Neve", parent=sci["id"])
+    assert pr.move_to_bin(["clip1.1", "clip2"], neve["id"]) == 2  # la parte sposta la clip intera
+    pr.move_to_bin([m["id"]], musica["id"])
+    assert a["bin"] == neve["id"] and b["bin"] == neve["id"] and m["bin"] == musica["id"]
+    assert not pr.move_bin(sci["id"], neve["id"])  # non dentro una sua sotto-cartella
+    assert pr.move_bin(neve["id"], None) and pr.bin(neve["id"])["parent"] is None
+    pr.move_bin(neve["id"], sci["id"])
+    pr.delete_bin(sci["id"])  # elimina anche Neve: le clip restano, fuori dalle cartelle
+    assert pr.bin(neve["id"]) is None and "bin" not in a and "bin" not in b
+    pr.move_to_bin(["clip1"], None); assert "bin" not in a
+    # salvataggio e riapertura; i progetti vecchi senza cartelle si aprono uguale
+    f = os.path.join(tmp, "bins.moviola"); pr.save(f)
+    pr2 = P.Project.load(f)
+    assert [x["name"] for x in pr2.bins] == ["Musica", "Musica 2"] and pr2.source(m["id"])["bin"] == musica["id"]
+    d = json.load(open(f)); d.pop("bins"); json.dump(d, open(f, "w"))
+    assert P.Project.load(f).bins == []
+    # annulla
+    pr2.checkpoint(); pr2.delete_bin(musica["id"]); pr2.undo()
+    assert pr2.bin(musica["id"]) and pr2.source(m["id"])["bin"] == musica["id"]
+    print("cartelle ok")
+
+
 def main():
     test_model(); test_color(); test_ripple()
+    with tempfile.TemporaryDirectory() as t:
+        test_bins(t)
     with tempfile.TemporaryDirectory() as t:
         test_export(t)
         test_effects(t)

@@ -88,6 +88,8 @@ class MainWindow(QMainWindow):
         self._busy_proxy = set()
         self._pending_imports = []
         self._import_results = {}
+        self._import_bins = {}  # file -> cartella della lista clip
+        self._import_target = None
         self._vdrag = None
         default_family()  # carattere di sistema letto subito (serve anche all'export in background)
 
@@ -522,6 +524,8 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self.act_import = act(m, "Importa clip…", self.import_dialog, "Ctrl+I")
         act(m, "Importa cartella…", self.import_folder_dialog)
+        act(m, "Nuova cartella nella lista clip", lambda: self.bin_action("new_bin", self.bin.selected_ids()),
+            "Ctrl+Shift+N")
         m.addSeparator()
         self.act_export = act(m, "Esporta video…", self.export_dialog, "Ctrl+E")
         m.addSeparator()
@@ -549,7 +553,7 @@ class MainWindow(QMainWindow):
         act(rm, "Rosso (da scartare)", lambda: self.rate_clips(RED_TAG), "3")
         act(rm, "Nessuna etichetta", lambda: self.rate_clips(None), "0")
         act(m, "Duplica parte", lambda: self.bin_action("duplicate", self.bin.selected_ids()), "Ctrl+D")
-        act(m, "Rinomina", lambda: self.bin_action("rename", self.bin.selected_ids()[:1]), "F2")
+        act(m, "Rinomina", self._rename_in_bin, "F2")
         act(m, "Accoda alla timeline", self.append_selected, "E")
         act(m, "Inserisci alla testina", self.insert_at_playhead, "F9")
 
@@ -794,7 +798,7 @@ class MainWindow(QMainWindow):
         self.bin.selection_changed.connect(self._bin_selection)
         self.bin.request.connect(self.bin_action)
         self.bin.hover.connect(self._bin_hover)
-        self.bin.import_files.connect(self.import_paths)
+        self.bin.import_files.connect(lambda paths, target: self.import_paths(paths, target or False))
         sb = self.source_bar
         sb.seek.connect(lambda t: self.engine.seek(t))
         sb.select_sub.connect(self._select_sub_from_bar)
@@ -1114,8 +1118,101 @@ class MainWindow(QMainWindow):
         self.refresh_inspector()
         self.engine.refresh()
 
+    def _rename_in_bin(self):
+        ids = self.bin.selected_ids()
+        if ids:
+            return self.bin_action("rename", ids[:1])
+        bins = self.bin.tree.selected_bins()
+        if bins:
+            self.bin_action("rename_bin:" + bins[0], [])
+
+    def _bins_changed(self, select=None, msg=None):
+        self.bin.rebuild(self.project, select)
+        self._mark_dirty()
+        if msg:
+            self.statusBar().showMessage(msg, 3000)
+
+    def _bin_folder_action(self, action, ids):
+        """Cartelle della scheda Clip. Restituisce True se l'azione era di questo tipo."""
+        pr = self.project
+        if action in ("new_bin",) or action.startswith("new_bin_in:"):
+            parent = action.split(":", 1)[1] if ":" in action else None
+            if parent is None and not ids:
+                parent = self.bin.target_bin()  # dentro la cartella selezionata
+            srcs = [pr.source(pr.source_id_of(i)) for i in ids]
+            music = bool(srcs) and all(x is not None and not x["has_video"] for x in srcs)
+            name, ok = QInputDialog.getText(self, "Nuova cartella", "Nome della cartella:",
+                                            text="Musica" if music else "")
+            if not ok:
+                return True
+            pr.checkpoint()
+            b = pr.add_bin(name, parent)
+            n = pr.move_to_bin(ids, b["id"]) if ids else 0
+            if parent and pr.bin(parent):
+                pr.bin(parent)["open"] = True
+            self._bins_changed(ids or None, f"Creata la cartella «{b['name']}»" + (f" con {n} clip." if n else "."))
+            return True
+        if action.startswith("rename_bin:"):
+            b = pr.bin(action.split(":", 1)[1])
+            if b is None:
+                return True
+            name, ok = QInputDialog.getText(self, "Rinomina cartella", "Nome della cartella:", text=b["name"])
+            if ok and name.strip() and name.strip() != b["name"]:
+                pr.checkpoint()
+                pr.rename_bin(b["id"], name)
+                self._bins_changed()
+            return True
+        if action.startswith("delete_bin:"):
+            b = pr.bin(action.split(":", 1)[1])
+            if b is None:
+                return True
+            pr.checkpoint()
+            pr.delete_bin(b["id"])
+            self._bins_changed(None, f"Cartella «{b['name']}» eliminata: le clip sono ancora nella lista "
+                                     "(Annulla per ripristinarla).")
+            return True
+        if action.startswith("move_to_bin:"):
+            bid = action.split(":", 1)[1] or None
+            if not ids:
+                return True
+            before = {s["id"]: s.get("bin") for s in pr.sources}
+            pr.checkpoint()
+            pr.move_to_bin(ids, bid)
+            if {s["id"]: s.get("bin") for s in pr.sources} == before:
+                pr.drop_checkpoint()
+                return True
+            if bid and pr.bin(bid):
+                pr.bin(bid)["open"] = True
+            where = f"in «{pr.bin(bid)['name']}»" if bid else "fuori dalle cartelle"
+            self._bins_changed(ids, f"Spostate {len(set(pr.source_id_of(i) for i in ids))} clip {where}.")
+            return True
+        if action.startswith("move_bins:"):
+            dest = action.split(":", 1)[1] or None
+            pr.checkpoint()
+            moved = [b for b in ids if pr.move_bin(b, dest)]
+            if not moved:
+                pr.drop_checkpoint()
+                return True
+            if dest and pr.bin(dest):
+                pr.bin(dest)["open"] = True
+            self._bins_changed()
+            return True
+        if action.startswith("import_in:"):
+            self._import_target = action.split(":", 1)[1]
+            self.import_dialog()
+            self._import_target = None
+            return True
+        if action.startswith("import_audio_in:"):
+            self._import_target = action.split(":", 1)[1]
+            self.import_audio_dialog()
+            self._import_target = None
+            return True
+        return False
+
     def bin_action(self, action, ids):
         pr = self.project
+        if self._bin_folder_action(action, ids):
+            return
         if action == "import":
             return self.import_dialog()
         if action == "import_folder":
@@ -1260,7 +1357,12 @@ class MainWindow(QMainWindow):
             kind = "ripple_delete" if self.timeline.view.ripple else "delete"
             self.timeline_action(kind, list(self.timeline.view.selection))
         else:
-            self.bin_action("delete", self.bin.selected_ids())
+            ids = self.bin.selected_ids()
+            if ids:
+                self.bin_action("delete", ids)
+            else:
+                for b in self.bin.tree.selected_bins():
+                    self.bin_action("delete_bin:" + b, [])
 
     def jump_edit(self, direction):
         if self.engine.mode == "source":
@@ -1945,7 +2047,13 @@ class MainWindow(QMainWindow):
             self.cfg["last_import_dir"] = d
             self.import_paths([d])
 
-    def import_paths(self, items):
+    def import_paths(self, items, target=None):
+        """target: cartella della lista clip dove mettere i file (None = quella
+        selezionata, se c'è)."""
+        if target is None:
+            target = getattr(self, "_import_target", None) or self.bin.target_bin()
+        elif target is False:
+            target = None  # lasciati fuori dalle cartelle
         files = []
         for p in items:
             if os.path.isdir(p):
@@ -1962,6 +2070,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Analisi di {len(files)} file…")
         self._pending_imports += files
         for f in files:
+            self._import_bins[f] = target
             fut = self.jobs.submit(media.probe, f)
             fut.add_done_callback(lambda fu, ff=f: self.media_event.emit(
                 "probed", ff, fu.exception() or fu.result()))
@@ -1984,9 +2093,14 @@ class MainWindow(QMainWindow):
                 if pr.find_source_by_path(f):
                     continue
                 src = pr.add_source(f, res)
+                bid = self._import_bins.get(f)
+                if bid and pr.bin(bid):
+                    src["bin"] = bid
+                    pr.bin(bid)["open"] = True
                 added.append(src)
             self._pending_imports = []
             self._import_results = {}
+            self._import_bins = {}
             if not added:
                 pr.drop_checkpoint()
             for src in added:
@@ -1995,6 +2109,9 @@ class MainWindow(QMainWindow):
             if added and self.engine.mode != "source":
                 self.show_ref(added[0]["id"])
             msg = f"Importate {len(added)} clip."
+            dest = {src.get("bin") for src in added} - {None}
+            if len(dest) == 1 and pr.bin(next(iter(dest))):
+                msg = f"Importate {len(added)} clip in «{pr.bin(next(iter(dest)))['name']}»."
             if errors:
                 QMessageBox.warning(self, "Alcuni file non sono stati importati", "\n".join(errors[:15]))
             self.statusBar().showMessage(msg, 5000)

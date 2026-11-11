@@ -81,6 +81,7 @@ def new_project_data() -> dict:
         "items": [],
         "global_grade": color.default_grade(),
         "markers": [],
+        "bins": [],  # cartelle della scheda Clip create dall'utente
         "use_proxies": True,
     }
 
@@ -295,6 +296,89 @@ class Project:
         if s:
             s["path"] = os.path.abspath(new_path)
             s["name"] = os.path.basename(new_path)
+
+    # ------------------------------------------- Cartelle della scheda Clip
+    @property
+    def bins(self):
+        return self.data.setdefault("bins", [])
+
+    def bin(self, bid):
+        return next((b for b in self.bins if b["id"] == bid), None)
+
+    def add_bin(self, name, parent=None):
+        """Nuova cartella (anche dentro un'altra). Il nome resta unico tra le sorelle."""
+        base = (name or "").strip() or "Nuova cartella"
+        siblings = {b["name"] for b in self.bins if b.get("parent") == parent}
+        name, k = base, 2
+        while name in siblings:
+            name, k = f"{base} {k}", k + 1
+        b = {"id": "bin_" + _uid(), "name": name, "parent": parent, "open": True}
+        self.bins.append(b)
+        return b
+
+    def rename_bin(self, bid, name):
+        b = self.bin(bid)
+        if b and name.strip():
+            b["name"] = name.strip()
+
+    def bin_children(self, bid):
+        return [b for b in self.bins if b.get("parent") == bid]
+
+    def bin_descendants(self, bid):
+        out, todo = [], [bid]
+        while todo:
+            cur = todo.pop()
+            for b in self.bin_children(cur):
+                out.append(b["id"])
+                todo.append(b["id"])
+        return out
+
+    def delete_bin(self, bid):
+        """Elimina la cartella (e quelle dentro): le clip non si perdono,
+        tornano nella cartella superiore o fuori dalle cartelle."""
+        b = self.bin(bid)
+        if b is None:
+            return
+        gone = set([bid] + self.bin_descendants(bid))
+        up = b.get("parent")
+        for s in self.sources:
+            if s.get("bin") in gone:
+                if up:
+                    s["bin"] = up
+                else:
+                    s.pop("bin", None)
+        self.data["bins"] = [x for x in self.bins if x["id"] not in gone]
+
+    def source_id_of(self, ref_id):
+        c = self.subclip(ref_id)
+        return c["source"] if c else ref_id
+
+    def move_to_bin(self, ref_ids, bid):
+        """Sposta clip (o le clip intere delle parti indicate) in una cartella;
+        bid None = fuori dalle cartelle."""
+        if bid is not None and self.bin(bid) is None:
+            return 0
+        n = 0
+        for sid in dict.fromkeys(self.source_id_of(r) for r in ref_ids):
+            s = self.source(sid)
+            if s is None:
+                continue
+            if bid:
+                s["bin"] = bid
+            else:
+                s.pop("bin", None)
+            n += 1
+        return n
+
+    def move_bin(self, bid, parent):
+        """Sposta una cartella dentro un'altra (non dentro sé stessa)."""
+        b = self.bin(bid)
+        if b is None or parent == bid or parent in self.bin_descendants(bid):
+            return False
+        if parent is not None and self.bin(parent) is None:
+            return False
+        b["parent"] = parent
+        return True
 
     # --------------------------------------------------------- Sotto-clip
     def subclips_of(self, sid):
