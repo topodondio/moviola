@@ -44,7 +44,12 @@ AUDIO_DEFAULTS = {"speed": 1.0, "gain_db": 0.0, "fade_in": 0.0, "fade_out": 0.0}
 TEXT_DEFAULTS = {"opacity": 1.0, "text": "Titolo", "font": "", "size": 8.0, "color": "#ffffff", "bold": True,
                  "italic": False,
                  "align": "center", "pos_x": 0.5, "pos_y": 0.5, "shadow": True, "box": False,
-                 "box_color": "#000000", "box_opacity": 0.5, "fade_in": 0.5, "fade_out": 0.5, "speed": 1.0}
+                 "box_color": "#000000", "box_opacity": 0.5, "fade_in": 0.5, "fade_out": 0.5, "speed": 1.0,
+                 # effetti: contorno, alone luminoso, spaziatura, maiuscole, animazioni di entrata e uscita
+                 "outline": False, "outline_color": "#000000", "outline_w": 0.06,
+                 "glow": False, "glow_color": "#e8a33d", "glow_amt": 0.6,
+                 "spacing": 0.0, "caps": False,
+                 "anim_in": "none", "anim_in_dur": 0.6, "anim_out": "none", "anim_out_dur": 0.6}
 
 
 SHAPE_DEFAULTS = {"color": "#ffffff", "opacity": 1.0, "width": 1.0, "height": 1.0, "pos_x": 0.5, "pos_y": 0.5,
@@ -972,6 +977,54 @@ class Project:
         if a_in >= a_out:
             return max(0.0, min(1.0, a_in)), FADE_COLORS.get(it.get("fade_in_color", "black"), (0, 0, 0))
         return max(0.0, min(1.0, a_out)), FADE_COLORS.get(it.get("fade_out_color", "black"), (0, 0, 0))
+
+    @staticmethod
+    def text_animated(it) -> bool:
+        return it.get("anim_in", "none") != "none" or it.get("anim_out", "none") != "none"
+
+    @staticmethod
+    def text_anim(it, u):
+        """Animazione di una scritta a u secondi dal suo inizio: (opacità, dx, dy,
+        scala, parte di lettere visibile). dx, dy in frazioni dell'altezza del fotogramma.
+        La stessa funzione serve all'anteprima e all'export."""
+        dur = Project.item_dur(it)
+        alpha, dx, dy, sc, ch = 1.0, 0.0, 0.0, 1.0, 1.0
+        dirs = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
+
+        def ease(x):
+            return 1.0 - (1.0 - x) ** 3
+
+        ain, aout = it.get("anim_in", "none"), it.get("anim_out", "none")
+        din = min(max(float(it.get("anim_in_dur", 0.6) or 0.6), 0.05), dur)
+        dout = min(max(float(it.get("anim_out_dur", 0.6) or 0.6), 0.05), dur)
+        if ain != "none" and u < din:
+            p = max(0.0, min(1.0, u / din))
+            e = ease(p)
+            if ain in dirs:
+                dx -= dirs[ain][0] * 0.12 * (1 - e)
+                dy -= dirs[ain][1] * 0.12 * (1 - e)
+                alpha *= e
+            elif ain == "zoom":
+                c1 = 1.70158  # un po' di rimbalzo
+                back = 1 + (c1 + 1) * (p - 1) ** 3 + c1 * (p - 1) ** 2
+                sc *= 0.4 + 0.6 * back
+                alpha *= min(1.0, p * 3)
+            elif ain == "type":
+                ch = min(ch, p)
+        left = dur - u
+        if aout != "none" and left < dout:
+            r = max(0.0, min(1.0, 1.0 - left / dout))
+            e = ease(r)
+            if aout in dirs:
+                dx += dirs[aout][0] * 0.12 * e
+                dy += dirs[aout][1] * 0.12 * e
+                alpha *= 1 - r
+            elif aout == "zoom":
+                sc *= 1.0 - 0.4 * e
+                alpha *= 1 - r
+            elif aout == "type":
+                ch = min(ch, 1.0 - r)
+        return alpha, dx, dy, sc, ch
 
     @staticmethod
     def opacity_at(it, t):

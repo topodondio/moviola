@@ -1227,10 +1227,12 @@ class TimelinePanel(QWidget):
         for b in (self.btn_split, self.btn_snap, self.btn_ripple, self.btn_slip, self.btn_fit, self.btn_text, self.btn_box):
             bar.addWidget(b)
         bar.addStretch(1)
-        bar.addWidget(QLabel("Zoom"))
+        self.zoom_label = QLabel("Zoom")
+        bar.addWidget(self.zoom_label)
         self.zoom = QSlider(Qt.Horizontal)
         self.zoom.setRange(0, 1000)
-        self.zoom.setFixedWidth(160)
+        self.zoom.setMinimumWidth(60)
+        self.zoom.setMaximumWidth(160)
         bar.addWidget(self.zoom)
         lay.addLayout(bar)
         row = QHBoxLayout()
@@ -1245,12 +1247,27 @@ class TimelinePanel(QWidget):
         self.hbar = QScrollBar(Qt.Horizontal)
         lay.addWidget(self.hbar)
         self._sync = False
+        # barra stretta: solo icone, così la colonna di sinistra si può allargare a piacere
+        self.setMinimumWidth(380)
+        self._compact = None
+        self._full_text = {b: b.text() for b in (self.btn_split, self.btn_snap, self.btn_ripple, self.btn_slip,
+                                                   self.btn_text, self.btn_box)}
         self.hbar.valueChanged.connect(self._hscroll)
         self.vbar.valueChanged.connect(self._vscroll)
         self.zoom.valueChanged.connect(self._zoomed)
         self.btn_snap.toggled.connect(self._snap)
         self.btn_fit.clicked.connect(self.view.zoom_fit)
         self.btn_split.clicked.connect(lambda: self.view.action.emit("split", list(self.view.selection)))
+
+    def _set_compact(self, on):
+        if on == self._compact:
+            return
+        self._compact = on
+        short = {self.btn_split: "✂"}
+        for b, text in self._full_text.items():
+            b.setText(short.get(b, "") if on else text)
+        self.title.setVisible(not on)
+        self.zoom_label.setVisible(not on)
 
     def _snap(self, on):
         self.view.snapping = on
@@ -1302,4 +1319,5 @@ class TimelinePanel(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        self._set_compact(self.width() < 1060)
         self.sync()

@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QFont
 from .. import speed as spd
 from .speed_curve import SpeedCurveWidget
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFontComboBox, QFormLayout,
+                               QGridLayout,
                                QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QScrollArea, QSlider,
                                QStackedWidget, QVBoxLayout, QWidget)
 
@@ -92,7 +93,35 @@ class ColorButton(QPushButton):
             self.picked.emit(c.name())
 
 
-_FALLBACK = {("video", "stab"): False, ("video", "stab_strength"): 0.5, ("video", "stab_crop"): 0.10}
+_FALLBACK = {("video", "stab"): False, ("video", "stab_strength"): 0.5, ("video", "stab_crop"): 0.10,
+             ("text", "outline"): False, ("text", "outline_w"): 0.06, ("text", "glow"): False,
+             ("text", "glow_amt"): 0.6, ("text", "spacing"): 0.0, ("text", "caps"): False,
+             ("text", "anim_in"): "none", ("text", "anim_in_dur"): 0.6,
+             ("text", "anim_out"): "none", ("text", "anim_out_dur"): 0.6}
+
+# stili pronti per le scritte: un clic e cambiano contorno, ombra, riquadro, lettere…
+TEXT_STYLES = [
+    ("Pulito", {"bold": True, "caps": False, "spacing": 0.0, "shadow": True, "outline": False, "glow": False,
+                "box": False}),
+    ("Sottotitolo", {"bold": False, "caps": False, "spacing": 0.0, "shadow": False, "outline": False,
+                     "glow": False, "box": True, "box_color": "#000000", "box_opacity": 0.55, "size": 5.0,
+                     "pos_y": 0.88, "pos_x": 0.5}),
+    ("Contorno", {"bold": True, "caps": False, "shadow": False, "outline": True, "outline_color": "#000000",
+                  "outline_w": 0.07, "glow": False, "box": False, "color": "#ffffff"}),
+    ("Cinema", {"bold": False, "caps": True, "spacing": 18.0, "shadow": False, "outline": False,
+                "glow": False, "box": False, "color": "#f2f2f2", "size": 6.0}),
+    ("Neon", {"bold": True, "caps": False, "shadow": False, "outline": False, "glow": True,
+              "glow_color": "#e8a33d", "glow_amt": 0.9, "color": "#fff3d6", "box": False}),
+    ("Titolo", {"bold": True, "caps": True, "spacing": 6.0, "shadow": True, "outline": False, "glow": False,
+                "box": False, "size": 12.0}),
+]
+
+ANIM_IN = [("Nessuna", "none"), ("Sale dal basso", "up"), ("Scende dall'alto", "down"),
+           ("Entra da destra", "left"), ("Entra da sinistra", "right"), ("Zoom con rimbalzo", "zoom"),
+           ("Macchina da scrivere", "type")]
+ANIM_OUT = [("Nessuna", "none"), ("Sale verso l'alto", "up"), ("Scende verso il basso", "down"),
+            ("Esce a sinistra", "left"), ("Esce a destra", "right"), ("Rimpicciolisce", "zoom"),
+            ("Si cancella (macchina)", "type")]
 
 
 def _group(title):
@@ -443,6 +472,14 @@ class Inspector(QWidget):
         f.addRow("Allineamento", self._combo("text", "align", [("Al centro", "center"), ("A sinistra", "left"),
                                                                 ("A destra", "right")]))
         lay.addWidget(gb)
+        gb, f = _group("Stili pronti")
+        grid = QGridLayout()
+        for n, (lab, props) in enumerate(TEXT_STYLES):
+            b = QPushButton(lab)
+            b.clicked.connect(lambda _=False, pp=props: self._apply_text_style(pp))
+            grid.addWidget(b, n // 3, n % 3)
+        f.addRow(grid)
+        lay.addWidget(gb)
         gb, f = _group("Posizione")
         f.addRow("Orizzontale", self._slider("text", "pos_x", 0, 100, 0.5, 1, " %", 50, scale=100))
         f.addRow("Verticale", self._slider("text", "pos_y", 0, 100, 0.5, 1, " %", 50, scale=100))
@@ -469,6 +506,36 @@ class Inspector(QWidget):
         f.addRow(row)
         f.addRow("Opacità riquadro", self._slider("text", "box_opacity", 0, 100, 1, 0, " %", 50, scale=100))
         lay.addWidget(gb)
+        gb, f = _group("Effetti")
+        row = QHBoxLayout()
+        row.addWidget(self._check("text", "outline", "Contorno"))
+        self.outline_btn = ColorButton()
+        self.outline_btn.picked.connect(lambda c: (self._begin("outline_color"), self._emit("text", "outline_color", c)))
+        row.addWidget(self.outline_btn)
+        row.addStretch(1)
+        f.addRow(row)
+        f.addRow("Spessore", self._slider("text", "outline_w", 1, 20, 0.5, 1, " %", 6, scale=100))
+        row = QHBoxLayout()
+        row.addWidget(self._check("text", "glow", "Alone luminoso"))
+        self.glow_btn = ColorButton()
+        self.glow_btn.picked.connect(lambda c: (self._begin("glow_color"), self._emit("text", "glow_color", c)))
+        row.addWidget(self.glow_btn)
+        row.addStretch(1)
+        f.addRow(row)
+        f.addRow("Intensità", self._slider("text", "glow_amt", 0, 100, 1, 0, " %", 60, scale=100))
+        f.addRow("Spaziatura lettere", self._slider("text", "spacing", -10, 60, 1, 0, " %", 0))
+        f.addRow(self._check("text", "caps", "Tutto maiuscolo"))
+        lay.addWidget(gb)
+        gb, f = _group("Animazione")
+        f.addRow("Entrata", self._combo("text", "anim_in", ANIM_IN))
+        f.addRow("Durata entrata", self._spin("text", "anim_in_dur", 0.1, 5, 0.1))
+        f.addRow("Uscita", self._combo("text", "anim_out", ANIM_OUT))
+        f.addRow("Durata uscita", self._spin("text", "anim_out_dur", 0.1, 5, 0.1))
+        hint = QLabel("Le animazioni si vedono riproducendo. Nell'export si può usare anche la dissolvenza sotto.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#808080; font-size:11px;")
+        f.addRow(hint)
+        lay.addWidget(gb)
         gb, f = _group("Tempi")
         f.addRow("Durata", self._spin("text", "duration", 0.1, 600, 0.5))
         f.addRow("Entrata (sfuma)", self._spin("text", "fade_in", 0, 10, 0.1))
@@ -480,6 +547,13 @@ class Inspector(QWidget):
     def _begin(self, key):
         if not self._loading:
             self.begin.emit(key)
+
+    def _apply_text_style(self, props):
+        """Stile pronto: un solo passo di annulla per tutte le proprietà."""
+        self._begin("text_style")
+        for k, v in props.items():
+            self._emit("text", k, v)
+        self.action.emit("refresh_inspector")
 
     def _shape_page(self):
         w = QWidget()
@@ -607,6 +681,8 @@ class Inspector(QWidget):
                     self.font_combo.setCurrentFont(QFont(fam))
                 self.color_btn.set_color(item.get("color", "#ffffff"))
                 self.box_btn.set_color(item.get("box_color", "#000000"))
+                self.outline_btn.set_color(item.get("outline_color", "#000000"))
+                self.glow_btn.set_color(item.get("glow_color", "#e8a33d"))
             if kind == "shape":
                 self.shape_color.set_color(item.get("color", "#000000"))
         finally:

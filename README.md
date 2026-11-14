@@ -205,6 +205,16 @@ per esempio con un doppio clic su un pezzo).
    la clip scelta in timeline o nell'elenco (passando il mouse sull'elenco
    scorre la clip), con sotto dimensione, fps e codec. Rifilando una clip
    in timeline vedi il fotogramma del bordo che trascini.
+   **Effetti sulle scritte.** Nella scheda EFFETTI, selezionando una scritta:
+   *Stili pronti* (Pulito, Sottotitolo, Contorno, Cinema, Neon, Titolo) con un
+   clic; *Effetti*: contorno (colore e spessore), alone luminoso, spaziatura
+   delle lettere, tutto maiuscolo; *Animazione*: entrata (sale dal basso,
+   scende dall'alto, entra da destra o sinistra, zoom con rimbalzo, macchina
+   da scrivere) e uscita (le stesse al contrario), con la loro durata.
+   Anteprima ed export coincidono (le scritte animate vengono disegnate
+   fotogramma per fotogramma).
+   **Colonna di sinistra.** Si può allargare trascinando il bordo: la barra
+   della timeline, con la colonna larga, passa da sola a solo icone.
    **Ritaglio dinamico** (Y, pulsante nella barra della timeline): con la
    modalità accesa, trascina una clip e il suo contenuto scorre: posizione
    e durata restano, cambiano inizio e fine nella clip originale.

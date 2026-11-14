@@ -409,7 +409,7 @@ class Engine(QObject):
             f.mode = mode
         if f is not None and self.mode == "timeline":
             pr = self.get_project()
-            f.texts = [(dict(x), pr.opacity_at(x, t)) for x in pr.texts_at(t)]
+            f.texts = [(dict(x, _u=t - x["start"]), pr.opacity_at(x, t)) for x in pr.texts_at(t)]
             it = pr.item(f.item_id) if f.item_id else None
             f.bars = (float(it.get("bars", 0.0) or 0.0) if it else 0.0,
                       float(pr.data["settings"].get("bars", 0.0) or 0.0))

@@ -256,7 +256,7 @@ class MainWindow(QMainWindow):
         self.mont_split.addWidget(work)
         self.mont_split.setStretchFactor(0, 0)
         self.mont_split.setStretchFactor(1, 1)
-        self.mont_split.setSizes([360, 1080])
+        self.mont_split.setSizes([400, 1040])
 
         # scheda CLIP: elenco per cartelle a sinistra, visore grande a destra
         self.clip_split = QSplitter(Qt.Horizontal)
@@ -501,7 +501,7 @@ class MainWindow(QMainWindow):
                 v = None
         if v is None:
             v = CpuViewer()
-        v.setMinimumSize(200, 112)
+        v.setMinimumSize(120, 80)
         return v
 
     def _make_viewer(self, gpu: bool):
@@ -1885,6 +1885,8 @@ class MainWindow(QMainWindow):
             self.inspector.set_stab_info("In attesa dell'analisi del movimento…", busy=True)
 
     def _inspector_action(self, act):
+        if act == "refresh_inspector":
+            return self.refresh_inspector()
         if act == "add_text":
             return self.add_text()
         if act == "add_box":

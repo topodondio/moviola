@@ -541,6 +541,7 @@ class ColorPanel(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         body = QWidget()
         lay = QVBoxLayout(body)
         lay.setContentsMargins(0, 0, 4, 0)
@@ -581,6 +582,7 @@ class ColorPanel(QWidget):
         gl.addWidget(self.curve)
         hint = QLabel("Clic: aggiungi punto · trascina: sposta · doppio clic: rimuovi")
         hint.setStyleSheet("color:#808080; font-size:11px;")
+        hint.setWordWrap(True)
         gl.addWidget(hint)
         self.chan.currentIndexChanged.connect(self._chan_changed)
         self.curve.pressed.connect(lambda: self.begin_edit.emit("curves"))

@@ -3,7 +3,10 @@ così il risultato finale coincide con quello che si vede."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QPainter
+from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QImage, QPainter, QPainterPath,
+                           QPen)
+
+from ..project import Project
 
 _DEFAULT_FAMILY = None
 
@@ -21,14 +24,22 @@ def _font(item, px):
     f.setBold(bool(item.get("bold", True)))
     f.setItalic(bool(item.get("italic", False)))
     f.setHintingPreference(QFont.PreferNoHinting)
+    sp = float(item.get("spacing", 0.0) or 0.0)
+    if sp:
+        f.setLetterSpacing(QFont.AbsoluteSpacing, px * sp / 100.0)
     return f
+
+
+def _lines(item):
+    text = item.get("text") or ""
+    return (text.upper() if item.get("caps") else text).split("\n") or [""]
 
 
 def _layout(item, frame: QRectF):
     px = float(item.get("size", 8.0)) / 100.0 * frame.height()
     font = _font(item, px)
     fm = QFontMetricsF(font)
-    lines = (item.get("text") or "").split("\n") or [""]
+    lines = _lines(item)
     widths = [fm.horizontalAdvance(line) for line in lines]
     lh = fm.lineSpacing()
     bw = max(widths) if widths else 0.0
@@ -84,6 +95,12 @@ def text_box(item, frame: QRectF) -> QRectF:
 
 def draw_text(p: QPainter, frame: QRectF, item, opacity: float = 1.0):
     opacity *= max(0.0, min(1.0, float(item.get("opacity", 1.0))))
+    u = item.get("_u")  # secondi dall'inizio della scritta (per le animazioni)
+    dx = dy = 0.0
+    sc, chars = 1.0, 1.0
+    if u is not None and Project.text_animated(item):
+        a, dx, dy, sc, chars = Project.text_anim(item, float(u))
+        opacity *= a
     if opacity <= 0.001 or not (item.get("text") or "").strip():
         return
     px, font, fm, lines, widths, lh, box = _layout(item, frame)
@@ -91,6 +108,11 @@ def draw_text(p: QPainter, frame: QRectF, item, opacity: float = 1.0):
     p.setOpacity(max(0.0, min(1.0, opacity)))
     p.setRenderHint(QPainter.Antialiasing, True)
     p.setRenderHint(QPainter.TextAntialiasing, True)
+    if dx or dy or sc != 1.0:
+        c = box.center()
+        p.translate(c.x() + dx * frame.height(), c.y() + dy * frame.height())
+        p.scale(sc, sc)
+        p.translate(-c.x(), -c.y())
     if item.get("box"):
         c = QColor(item.get("box_color", "#000000"))
         c.setAlphaF(max(0.0, min(1.0, float(item.get("box_opacity", 0.5)))))
@@ -101,8 +123,13 @@ def draw_text(p: QPainter, frame: QRectF, item, opacity: float = 1.0):
     p.setFont(font)
     align = item.get("align", "center")
     shadow = bool(item.get("shadow", True))
+    glow = bool(item.get("glow"))
+    outline = bool(item.get("outline"))
     off = max(1.0, px * 0.05)
     col = QColor(item.get("color", "#ffffff"))
+    # macchina da scrivere: quante lettere mostrare (il testo intero decide l'ingombro)
+    total = sum(len(x) for x in lines)
+    left = int(round(chars * total)) if chars < 1.0 else total
     for i, line in enumerate(lines):
         w = widths[i]
         if align == "left":
@@ -112,16 +139,38 @@ def draw_text(p: QPainter, frame: QRectF, item, opacity: float = 1.0):
         else:
             x = box.center().x() - w / 2
         y = box.top() + i * lh + fm.ascent()
+        shown = line[:max(0, left)]
+        left -= len(line)
+        if not shown:
+            continue
+        path = None
+        if glow or outline:
+            path = QPainterPath()
+            path.addText(QPointF(x, y), font, shown)
+        if glow:
+            gc = QColor(item.get("glow_color", "#e8a33d"))
+            amt = max(0.0, min(1.0, float(item.get("glow_amt", 0.6))))
+            steps = 7
+            for k in range(steps, 0, -1):
+                gc.setAlphaF(min(1.0, amt * 0.35 * (1.0 - (k - 1) / steps) ** 1.5))
+                p.strokePath(path, QPen(gc, px * 0.07 * k, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         if shadow:
             p.setPen(QColor(0, 0, 0, 150))
-            p.drawText(QPointF(x + off, y + off), line)
+            p.drawText(QPointF(x + off, y + off), shown)
+        if outline:
+            oc = QColor(item.get("outline_color", "#000000"))
+            ow = max(0.005, float(item.get("outline_w", 0.06))) * px
+            p.strokePath(path, QPen(oc, ow * 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.setPen(col)
-        p.drawText(QPointF(x, y), line)
+        p.drawText(QPointF(x, y), shown)
     p.restore()
 
 
-def render_png(item, W: int, H: int, path: str) -> bool:
-    """Scritta su un PNG trasparente grande quanto il fotogramma (per l'export)."""
+def render_png(item, W: int, H: int, path: str, u=None) -> bool:
+    """Scritta su un PNG trasparente grande quanto il fotogramma (per l'export).
+    u: secondi dall'inizio della scritta, per le animazioni."""
+    if u is not None:
+        item = dict(item, _u=u)
     img = QImage(W, H, QImage.Format_ARGB32_Premultiplied)
     img.fill(Qt.transparent)
     p = QPainter(img)

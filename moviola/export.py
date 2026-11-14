@@ -6,6 +6,7 @@ colore (clip intera -> pezzo -> timeline). L'audio è il mix delle tracce.
 """
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
@@ -240,14 +241,35 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
     if text_renderer is not None:
         texts = [t for t in project.texts() if project.item_end(t) > start and t["start"] < end]
         for k, t in enumerate(sorted(texts, key=lambda i: i["track"])):
-            png = os.path.join(workdir, f"testo_{k}.png")
-            if not text_renderer(t, W, H, png):
-                continue
             a = max(t["start"], start) - start
             d = project.item_end(t) - t["start"]
-            idx = n_inputs
-            n_inputs += 1
-            inputs += ["-loop", "1", "-framerate", f"{fps:g}", "-t", f"{d + 0.1:.6f}", "-i", png]
+            if project.text_animated(t):
+                # scritta animata: una sequenza di PNG, uno per fotogramma (quelli
+                # uguali si copiano, così si disegna solo dove qualcosa si muove)
+                nfr = int(math.ceil(d * fps)) + 2
+                last_key, last_png = None, None
+                for n in range(nfr):
+                    png = os.path.join(workdir, f"testo_{k}_{n:05d}.png")
+                    key = tuple(round(x, 3) for x in project.text_anim(t, min(n / fps, d)))
+                    if key == last_key and last_png:
+                        shutil.copyfile(last_png, png)
+                    elif not text_renderer(t, W, H, png, u=min(n / fps, d)):
+                        break
+                    last_key, last_png = key, png
+                else:
+                    idx = n_inputs
+                    n_inputs += 1
+                    inputs += ["-framerate", f"{fps:g}", "-i", os.path.join(workdir, f"testo_{k}_%05d.png")]
+                    png = None
+                if png is not None:
+                    continue
+            else:
+                png = os.path.join(workdir, f"testo_{k}.png")
+                if not text_renderer(t, W, H, png):
+                    continue
+                idx = n_inputs
+                n_inputs += 1
+                inputs += ["-loop", "1", "-framerate", f"{fps:g}", "-t", f"{d + 0.1:.6f}", "-i", png]
             f = f"[{idx}:v]format=rgba"
             fi = min(float(t.get("fade_in", 0) or 0), d)
             fo = min(float(t.get("fade_out", 0) or 0), d)
