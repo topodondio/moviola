@@ -1,0 +1,121 @@
+MOVIOLA - COME INSTALLARLA
+==========================
+
+Moviola si installa come una normale applicazione: un'icona in Applicazioni
+(Mac) o sul Desktop e nel menu Start (Windows). Una volta installata si
+aggiorna da sola da GitHub: non servono piu' GitHub Desktop ne' il "Pull".
+
+Cosa serve prima
+----------------
+- Python 3.9 o successivo. Se non c'e': https://www.python.org/downloads/
+  (su Windows, durante l'installazione, spunta "Add python.exe to PATH").
+- Internet, solo per l'installazione e per gli aggiornamenti.
+- Spazio: alcune centinaia di MB per le librerie (su un computer dove Moviola e' gia'
+  stata avviata sono gia' installate: non vengono scaricate di nuovo).
+
+
+1. SCARICARE
+------------
+Sulla pagina del repository su GitHub: pulsante verde "Code" -> "Download ZIP".
+Poi estrai lo ZIP (Mac: doppio clic; Windows: tasto destro -> "Estrai tutto").
+
+Se hai gia' la cartella di GitHub Desktop va bene anche quella: basta che sia
+aggiornata (Pull).
+
+
+2. INSTALLARE
+-------------
+MAC
+  1. Apri la cartella estratta e fai doppio clic su  installa_mac.command
+  2. Se il Mac dice che non puo' aprirlo perche' viene da uno sviluppatore
+     non identificato: clic destro sul file -> "Apri" -> "Apri".
+     Se non basta: Impostazioni di Sistema -> Privacy e sicurezza -> in basso
+     "Apri comunque". In alternativa apri il Terminale, scrivi  bash  seguito
+     da uno spazio, trascina il file nella finestra e premi Invio.
+  3. Si apre il Terminale e fa tutto da solo (la prima volta qualche minuto).
+     Alla fine chiede se aprire Moviola.
+  L'app "Moviola" e' in Applicazioni: puoi trascinarla nel Dock.
+
+WINDOWS
+  1. Apri la cartella estratta e fai doppio clic su  installa_windows.bat
+  2. Se compare "Windows ha protetto il PC": "Ulteriori informazioni" ->
+     "Esegui comunque".
+  3. Si apre una finestra nera che fa tutto da sola (la prima volta qualche
+     minuto). Alla fine chiede se aprire Moviola.
+  Trovi "Moviola" sul Desktop e nel menu Start.
+
+Dopo l'installazione la cartella scaricata si puo' eliminare.
+
+
+3. AGGIORNAMENTI
+----------------
+All'avvio (al massimo una volta al giorno) Moviola controlla se su GitHub c'e'
+una versione piu' nuova e chiede se installarla: scarica meno di 1 MB e
+riavvia il programma. Si puo' controllare a mano dal menu
+Aiuto -> "Cerca aggiornamenti...". In fondo allo stesso menu c'e' il numero
+della versione installata.
+
+IMPORTANTE: oggi il repository "moviola" su GitHub e' PRIVATO, quindi il
+programma non riesce a leggerlo. Scegli una delle due strade (si fa una volta
+sola):
+
+  A) Renderlo pubblico (la piu' semplice)
+     Su GitHub: repository moviola -> Settings -> General -> in fondo
+     "Danger Zone" -> "Change repository visibility" -> "Make public".
+     Da quel momento chiunque puo' vedere il codice (non i tuoi video ne' i
+     tuoi progetti, che non sono su GitHub).
+
+  B) Tenerlo privato e dare a Moviola una chiave di sola lettura
+     Su GitHub: clic sulla tua foto in alto a destra -> Settings ->
+     Developer settings -> Personal access tokens -> Fine-grained tokens ->
+     "Generate new token".
+       - Repository access: "Only select repositories" -> moviola
+       - Permissions -> Repository permissions -> Contents: "Read-only"
+       - Scadenza: quella che preferisci (alla scadenza va rifatta)
+     Copia la chiave (inizia con github_pat_...). In Moviola:
+     File -> Preferenze -> "Chiave GitHub" -> incolla -> OK.
+     La chiave resta salvata solo su quel computer; va inserita su ognuno
+     (Mac e PC).
+
+  (Le voci dei menu di GitHub possono cambiare leggermente nel tempo.)
+
+Per non far cercare gli aggiornamenti all'avvio: File -> Preferenze ->
+togli la spunta in "Aggiornamenti".
+
+
+4. DOVE STA COSA
+----------------
+                     MAC                                         WINDOWS
+Programma   ~/Library/Application Support/Moviola/app   %LOCALAPPDATA%\Moviola\app
+Librerie    ~/Library/Application Support/Moviola/venv  %LOCALAPPDATA%\Moviola\venv
+Impostaz.   ~/Library/Caches/Moviola                    %LOCALAPPDATA%\Moviola
+
+I progetti (.moviola) e la cache dei video stanno dove li hai messi tu
+(per esempio sul disco esterno): installazione e aggiornamenti non li toccano.
+
+
+5. REINSTALLARE O DISINSTALLARE
+-------------------------------
+Reinstallare: rilancia installa_mac.command / installa_windows.bat da una
+cartella scaricata di nuovo. Progetti e impostazioni restano.
+
+Disinstallare
+  Mac:     cestina "Moviola" da Applicazioni e la cartella
+           ~/Library/Application Support/Moviola
+           (nel Finder: menu Vai -> "Vai alla cartella..." e incolla il percorso)
+  Windows: elimina i collegamenti "Moviola" (Desktop e menu Start) e la
+           cartella %LOCALAPPDATA%\Moviola (incolla il percorso nella barra
+           di Esplora risorse)
+
+
+6. SE QUALCOSA NON VA
+---------------------
+- L'installazione si ferma sulle librerie: controlla la connessione e
+  rilancia il file di installazione (riprende da dove era arrivato).
+- Moviola non parte dall'icona: avviala una volta con
+  avvia_mac.command / avvia_windows.bat dentro la cartella "app" qui sopra,
+  cosi' si vede il messaggio d'errore.
+- Gli errori del programma finiscono in  errori.log  nella cartella delle
+  impostazioni.
+
+Per usare il programma: vedi README.md.

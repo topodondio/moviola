@@ -12,7 +12,7 @@ from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence,
 from PySide6.QtWidgets import (QComboBox, QSizePolicy, QStackedWidget, QTabBar, QTabWidget, QToolBar, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QMainWindow, QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget)
 
-from .. import stabilize, audio, color, media, paths
+from .. import __version__, stabilize, audio, color, media, paths, update
 from .. import speed as spd
 from ..playback import Engine
 from ..project import Project
@@ -654,6 +654,10 @@ class MainWindow(QMainWindow):
         act(m, "Scorciatoie da tastiera", self.show_shortcuts, "F1")
         act(m, "Cartella cache (proxy e audio)", lambda: QDesktopServices.openUrl(
             QUrl.fromLocalFile(paths.cache_root())))
+        m.addSeparator()
+        act(m, "Cerca aggiornamenti…", lambda: self.check_updates(manual=True))
+        a = act(m, f"Moviola {__version__}", lambda: None)
+        a.setEnabled(False)
 
     def _build_toolbar(self):
         """Barra in alto: solo icone (il nome compare passando sopra col mouse)."""
@@ -760,6 +764,8 @@ class MainWindow(QMainWindow):
         v = d.values()
         self.cfg["projects_dir"] = v["projects_dir"]
         self.cfg["cache_limit_gb"] = v["cache_limit_gb"]
+        self.cfg["auto_update_check"] = v["auto_update_check"]
+        self.cfg["github_token"] = v["github_token"]
         moved = (v["cache_dir"] or "") != (self.cfg.get("cache_dir") or "")
         self.cfg["cache_dir"] = v["cache_dir"]
         paths.set_media_cache(v["cache_dir"])
@@ -771,6 +777,86 @@ class MainWindow(QMainWindow):
             self._reload_media()
             self.statusBar().showMessage("Cache spostata: i file si ricreano nella nuova posizione.", 5000)
         self._enforce_cache()
+
+    # ------------------------------------------------------- aggiornamenti
+    def check_updates(self, manual=False):
+        """Controlla su GitHub se c'è una versione più nuova (in background)."""
+        if update.is_checkout():
+            if manual:
+                QMessageBox.information(self, "Aggiornamenti",
+                                        "Stai usando la cartella di GitHub Desktop: per aggiornare fai Pull lì.\n\n"
+                                        "Con l'app installata (vedi LEGGIMI.txt) l'aggiornamento si fa da qui.")
+            return
+        if getattr(self, "_update_busy", False):
+            return
+        self._update_busy = True
+        self.cfg["last_update_check"] = time.time()
+        token = self.cfg.get("github_token") or None
+        if manual:
+            self.statusBar().showMessage("Cerco aggiornamenti su GitHub…", 4000)
+        emit = self.media_event.emit
+
+        def do():
+            try:
+                newer, v = update.check(token)
+                emit("update_checked", "manual" if manual else "", (newer, v, None))
+            except Exception as e:
+                emit("update_checked", "manual" if manual else "", (False, "", str(e)))
+
+        self.jobs.submit(do)
+
+    def _update_checked(self, manual, newer, version, error):
+        self._update_busy = False
+        if error:
+            if manual:
+                QMessageBox.warning(self, "Aggiornamenti", error)
+            return
+        if not newer:
+            if manual:
+                QMessageBox.information(self, "Aggiornamenti", f"Moviola è aggiornata (versione {__version__}).")
+            return
+        if not manual and self.cfg.get("skip_version") == version:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Aggiornamento disponibile")
+        box.setText(f"È disponibile Moviola {version} (hai la {__version__}).")
+        box.setInformativeText("L'aggiornamento scarica meno di 1 MB e riavvia il programma. "
+                               "Progetti, impostazioni e cache non vengono toccati.")
+        now = box.addButton("Aggiorna ora", QMessageBox.AcceptRole)
+        box.addButton("Più tardi", QMessageBox.RejectRole)
+        skip = None if manual else box.addButton("Salta questa versione", QMessageBox.DestructiveRole)
+        box.exec()
+        if skip is not None and box.clickedButton() is skip:
+            self.cfg["skip_version"] = version
+            self._save_cfg()
+        elif box.clickedButton() is now:
+            self._install_update()
+
+    def _install_update(self):
+        if not self._confirm_discard():
+            return
+        self.statusBar().showMessage("Scarico l'aggiornamento…")
+        token = self.cfg.get("github_token") or None
+        emit = self.media_event.emit
+
+        def do():
+            try:
+                emit("update_installed", "", (update.update(token), None))
+            except Exception as e:
+                emit("update_installed", "", ("", str(e)))
+
+        self.jobs.submit(do)
+
+    def _update_installed(self, version, error):
+        self.statusBar().clearMessage()
+        if error:
+            QMessageBox.warning(self, "Aggiornamento non riuscito", error)
+            return
+        QMessageBox.information(self, "Aggiornamento installato",
+                                f"Moviola {version} è installata: ora il programma si riavvia.")
+        update.restart()
+        self.project.dirty = False  # già chiesto prima di aggiornare
+        self.close()
 
     def _reload_media(self):
         """Ricollega audio, forme d'onda, miniature e proxy alla cache attuale."""
@@ -2224,6 +2310,10 @@ class MainWindow(QMainWindow):
                 if src:
                     self.engine.invalidate_source(src["path"])
             self._set_status(key)
+        elif kind == "update_checked":
+            self._update_checked(key == "manual", *payload)
+        elif kind == "update_installed":
+            self._update_installed(*payload)
         elif kind == "stab_progress":
             if key in self._busy_stab:
                 self._busy_stab[key] = float(payload)
@@ -2484,6 +2574,8 @@ class MainWindow(QMainWindow):
         self._cache_notice()
         self._enforce_cache()
         self.show_welcome()
+        if update.due(self.cfg, time.time()):
+            QTimer.singleShot(3000, self.check_updates)
 
     def save_as(self):
         start = self.project.path or os.path.join(self.cfg.get("last_project_dir", os.path.expanduser("~")),

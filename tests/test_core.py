@@ -437,10 +437,54 @@ def test_duplicate():
     print("duplica ok")
 
 
+def test_update(tmp):
+    import io, zipfile
+    from moviola import update as U
+    assert U.is_newer("0.12.1", "0.12.0") and U.is_newer("0.13", "0.12.9") and U.is_newer("1.0.0", "0.99.9")
+    assert not U.is_newer("0.12.0", "0.12.0") and not U.is_newer("0.9.0", "0.10.0")
+    root = os.path.join(tmp, "app"); os.makedirs(os.path.join(root, "moviola", "ui"))
+    for rel, txt in (("moviola/__init__.py", '__version__ = "0.1.0"\n'), ("moviola/app.py", "vecchio"),
+                     ("moviola/vecchio_modulo.py", "da togliere"), ("moviola/ui/vecchia.py", "da togliere"),
+                     ("requirements.txt", "numpy\n"), ("mio_file.txt", "resta")):
+        open(os.path.join(root, rel), "w").write(txt)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:      # come lo zip di GitHub: tutto dentro una cartella
+        for rel, txt in (("moviola/__init__.py", '__version__ = "9.9.9"\n'), ("moviola/app.py", "nuovo"),
+                         ("moviola/nuovo/modulo.py", "x"), ("requirements.txt", "numpy\ncertifi\n"),
+                         ("avvia_mac.command", "#!/bin/bash\n")):
+            z.writestr("topodondio-moviola-abc123/" + rel, txt)
+    assert U.apply_zip(buf.getvalue(), root) == "9.9.9"
+    rd = lambda rel: open(os.path.join(root, rel)).read()
+    assert rd("moviola/app.py") == "nuovo" and rd("requirements.txt") == "numpy\ncertifi\n" and rd("mio_file.txt") == "resta"
+    assert os.path.exists(os.path.join(root, "moviola", "nuovo", "modulo.py"))
+    assert not os.path.exists(os.path.join(root, "moviola", "vecchio_modulo.py"))
+    assert not os.path.exists(os.path.join(root, "moviola", "ui"))
+    if os.name != "nt":
+        assert os.access(os.path.join(root, "avvia_mac.command"), os.X_OK)
+    for bad in (b"non uno zip", None):
+        b2 = io.BytesIO()
+        if bad is None:                        # zip senza Moviola dentro, o con percorsi che escono
+            with zipfile.ZipFile(b2, "w") as z:
+                z.writestr("x/../../fuori.txt", "no")
+            bad = b2.getvalue()
+        try:
+            U.apply_zip(bad, root); raise AssertionError("doveva rifiutare")
+        except (U.UpdateError, zipfile.BadZipFile):
+            pass
+    assert rd("moviola/app.py") == "nuovo" and not os.path.exists(os.path.join(tmp, "fuori.txt"))
+    os.makedirs(os.path.join(root, ".git"))    # cartella di GitHub Desktop: non si tocca
+    try:
+        U.apply_zip(buf.getvalue(), root); raise AssertionError("doveva rifiutare")
+    except U.UpdateError:
+        pass
+    print("aggiornamenti ok")
+
+
 def main():
     test_model(); test_color(); test_ripple(); test_duplicate()
     with tempfile.TemporaryDirectory() as t:
         test_bins(t)
+        test_update(t)
     with tempfile.TemporaryDirectory() as t:
         test_export(t)
         test_effects(t)

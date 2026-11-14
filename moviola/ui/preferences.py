@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-                               QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout)
+                               QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout)
 
 from .. import paths
 
@@ -88,6 +88,20 @@ class PreferencesDialog(QDialog):
         f.addRow(note)
         lay.addWidget(gb)
 
+        # ---------------------------------------------------- aggiornamenti
+        gb = QGroupBox("Aggiornamenti")
+        f = QFormLayout(gb)
+        self.auto_check = QCheckBox("Cerca gli aggiornamenti all'avvio (al massimo una volta al giorno)")
+        self.auto_check.setChecked(bool(cfg.get("auto_update_check", True)))
+        f.addRow(self.auto_check)
+        self.token = QLineEdit(cfg.get("github_token") or "")
+        self.token.setEchoMode(QLineEdit.Password)
+        self.token.setPlaceholderText("solo se il repository su GitHub è privato")
+        self.token.setToolTip("Chiave di sola lettura creata su GitHub (vedi LEGGIMI.txt, «Aggiornamenti»).\n"
+                              "Resta salvata solo su questo computer.")
+        f.addRow("Chiave GitHub", self.token)
+        lay.addWidget(gb)
+
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
@@ -144,4 +158,5 @@ class PreferencesDialog(QDialog):
 
     def values(self):
         return {"cache_dir": self.cache_dir, "cache_limit_gb": self.limit.value(),
-                "projects_dir": self.projects_dir, "clear_old": self.clear_old.isChecked()}
+                "projects_dir": self.projects_dir, "clear_old": self.clear_old.isChecked(),
+                "auto_update_check": self.auto_check.isChecked(), "github_token": self.token.text().strip()}

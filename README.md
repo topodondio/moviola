@@ -8,7 +8,17 @@ bianco, curva, HSL per colore), senza nodi.
 > Stato: **prototipo 0.10**. Le funzioni base ci sono tutte; da collaudare
 > sul campo su Mac e Windows.
 
-## Avvio
+## Installazione
+
+Per installarla come una normale applicazione (icona in Applicazioni o nel menu
+Start, aggiornamenti automatici da GitHub senza GitHub Desktop) vedi
+**[LEGGIMI.txt](LEGGIMI.txt)**: in breve, scarica lo ZIP da GitHub e fai doppio
+clic su `installa_mac.command` (Mac) o `installa_windows.bat` (Windows).
+Gli aggiornamenti si cercano da soli all'avvio e dal menu Aiuto → «Cerca
+aggiornamenti…»; se il repository è privato serve una chiave di sola lettura
+(File → Preferenze).
+
+## Avvio senza installare
 
 | Sistema | Cosa fare |
 |---|---|
@@ -321,6 +331,8 @@ moviola/
   playback.py    motore di riproduzione (thread di decodifica + orologio)
   export.py      export con FFmpeg (lut3d + mix audio)
   stabilize.py   stabilizzazione: analisi del movimento, percorso liscio, correzione
+  update.py      aggiornamenti da GitHub
+  risorse/       icona del programma
   ui/            interfaccia PySide6 (lista clip, visore GPU, timeline, colore)
 tests/test_core.py   test del motore senza interfaccia
 tests/test_stab.py   test della stabilizzazione (analisi, anteprima, export)

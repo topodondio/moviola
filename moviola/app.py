@@ -53,6 +53,18 @@ def main():
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     app.setApplicationName("Moviola")
+    try:
+        from PySide6.QtGui import QIcon
+
+        icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "risorse", "icona.png")
+        if os.path.exists(icon):
+            app.setWindowIcon(QIcon(icon))
+        if os.name == "nt":  # così la barra di Windows mostra l'icona di Moviola e non quella di Python
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Moviola.Editor")
+    except Exception:
+        pass
     app.setOrganizationName("Moviola")
     if sys.platform == "darwin":
         app.setFont(QFont(".AppleSystemUIFont", 12))
