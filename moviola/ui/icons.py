@@ -112,6 +112,14 @@ def _draw(name: str, p: QPainter, s: float, c: QColor):
         p.drawRect(QRectF(s * 0.58, s * 0.34, s * 0.26, s * 0.32))
         p.drawLine(QPointF(s * 0.56, s * 0.5), QPointF(s * 0.46, s * 0.5))
         _arrow_head(p, QPointF(s * 0.44, s * 0.5), math.pi, s * 0.16)
+    elif name == "slip":
+        # clip lunga (il file) con dentro la parte usata, e frecce per scorrerla
+        p.drawRect(QRectF(m, s * 0.22, s - 2 * m, s * 0.34))
+        p.setBrush(QColor(c.red(), c.green(), c.blue(), 110))
+        p.drawRect(QRectF(s * 0.34, s * 0.22, s * 0.32, s * 0.34))
+        p.drawLine(QPointF(s * 0.3, s * 0.78), QPointF(s * 0.7, s * 0.78))
+        _arrow_head(p, QPointF(s * 0.26, s * 0.78), math.pi, s * 0.16)
+        _arrow_head(p, QPointF(s * 0.74, s * 0.78), 0.0, s * 0.16)
     elif name == "magnet":
         pen.setWidthF(s * 0.13)
         pen.setCapStyle(Qt.FlatCap)

@@ -88,6 +88,7 @@ class TimelineView(QWidget):
         self.selection: set[str] = set()
         self.snapping = True
         self.ripple = False
+        self.slip_mode = False  # ritaglio dinamico: trascinare il pezzo ne scorre il contenuto
         self._drag = None
         self._ghost = None
         self._rubber = None
@@ -682,8 +683,11 @@ class TimelineView(QWidget):
         rect = self.item_rect(it)
         origin = json.dumps(pr.data["items"])
         mods = e.modifiers()
-        if alt and (mods & Qt.ControlModifier or mods & Qt.MetaModifier) and not spd.is_static(it):
-            # Ctrl/Cmd+Alt+trascina: scorre il contenuto (posizione e durata restano)
+        on_edge = pos.x() - rect.left() <= EDGE or rect.right() - pos.x() <= EDGE
+        if (self.slip_mode and not on_edge and e.button() == Qt.LeftButton and not spd.is_static(it)) or (
+                alt and (mods & Qt.ControlModifier or mods & Qt.MetaModifier) and not spd.is_static(it)):
+            # ritaglio dinamico (modalità attiva, o Ctrl/Cmd+Alt+trascina): scorre il
+            # contenuto, posizione e durata restano
             pr.checkpoint()
             self._drag = ("slip", it["id"], self.t_of(pos.x()), origin)
             self.setCursor(Qt.SizeHorCursor)
@@ -756,6 +760,10 @@ class TimelineView(QWidget):
                 self.setToolTip("")
                 if pos.x() - rect.left() <= EDGE or rect.right() - pos.x() <= EDGE:
                     self.setCursor(Qt.SizeHorCursor)
+                elif self.slip_mode:
+                    self.setCursor(Qt.SizeHorCursor)
+                    self.setToolTip("Ritaglio dinamico: trascina per scorrere il contenuto\n"
+                                    "(la clip resta dov'è e lunga uguale)")
                 else:
                     self.setCursor(Qt.OpenHandCursor)
             else:
@@ -844,6 +852,7 @@ class TimelineView(QWidget):
             t = self._snap(self.t_of(pos.x()), exclude=pr.expand_linked([iid]))
             pr.trim_item(iid, edge, t, linked=not alt, ripple=self.ripple)
             self.changed.emit()
+            self.host.trim_preview(iid, edge)
             self.update()
             return
         if kind == "move":
@@ -1198,6 +1207,15 @@ class TimelinePanel(QWidget):
                                    "continua, si richiudono solo le tracce del pezzo.")
         self.btn_ripple.setStyleSheet("QPushButton:checked { background: #5a4520; border-color: #e8a33d; }")
         self.btn_ripple.toggled.connect(lambda on: setattr(self.view, "ripple", on))
+        self.btn_slip = QPushButton(" Ritaglio dinamico")
+        self.btn_slip.setIcon(icons.icon("slip", 16))
+        self.btn_slip.setCheckable(True)
+        self.btn_slip.setToolTip("Ritaglio dinamico (Y): con la modalità accesa, tieni premuto il sinistro su una clip\n"
+                                 "e trascina: la clip resta dov'è e lunga uguale, ma cambiano il punto di inizio e\n"
+                                 "di fine dentro alla clip originale. Il bordo si rifila come sempre.\n"
+                                 "Senza la modalità: Ctrl/Cmd+Alt+trascina, oppure i tasti , e .")
+        self.btn_slip.setStyleSheet("QPushButton:checked { background: #5a4520; border-color: #e8a33d; }")
+        self.btn_slip.toggled.connect(self._slip_toggled)
         self.btn_fit = QPushButton("Adatta")
         self.btn_text = QPushButton(" Scritta")
         self.btn_text.setIcon(icons.icon("text", 16))
@@ -1206,7 +1224,7 @@ class TimelinePanel(QWidget):
         self.btn_box.setIcon(icons.icon("box", 16))
         self.btn_box.setToolTip("Aggiungi un riquadro colorato alla testina (R): sfondo per le scritte,\n"
                                 "fascia, schermo pieno colorato…")
-        for b in (self.btn_split, self.btn_snap, self.btn_ripple, self.btn_fit, self.btn_text, self.btn_box):
+        for b in (self.btn_split, self.btn_snap, self.btn_ripple, self.btn_slip, self.btn_fit, self.btn_text, self.btn_box):
             bar.addWidget(b)
         bar.addStretch(1)
         bar.addWidget(QLabel("Zoom"))
@@ -1236,6 +1254,10 @@ class TimelinePanel(QWidget):
 
     def _snap(self, on):
         self.view.snapping = on
+
+    def _slip_toggled(self, on):
+        self.view.slip_mode = on
+        self.view.setCursor(Qt.ArrowCursor)
 
     def _hscroll(self, v):
         if self._sync:

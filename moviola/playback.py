@@ -57,6 +57,7 @@ class Engine(QObject):
     frame_ready = Signal(object)
     position_changed = Signal(float)
     playing_changed = Signal(bool)
+    peek_ready = Signal(object)  # fotogramma per il secondo schermo (sorgente)
 
     QMAX = 8
 
@@ -91,8 +92,16 @@ class Engine(QObject):
         self._next_t = 0.0
         self._running = True
         self._last_emit = 0.0
+        self._lut_lock = threading.Lock()
+        # secondo schermo: fotogrammi della sorgente, su un thread e dei file aperti a parte
+        self.peek_pool = SourcePool(3)
+        self._peek_req = None
+        self._peek_drops: list[str] = []
+        self._peek_cond = threading.Condition()
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
+        self._peek_thread = threading.Thread(target=self._peek_worker, daemon=True)
+        self._peek_thread.start()
 
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.PreciseTimer)
@@ -231,13 +240,77 @@ class Engine(QObject):
         self.player.stop()
         with self._cond:
             self._cond.notify()
+        with self._peek_cond:
+            self._peek_cond.notify()
         self.pool.clear()
 
     def invalidate_source(self, path=None):
         """Da chiamare quando cambia il file usato (es. proxy pronto)."""
         with self._cond:
             self._drops.append(path or "*")
+        with self._peek_cond:
+            self._peek_drops.append(path or "*")
+            self._peek_cond.notify()
         self.refresh()
+
+    # ------------------------------------------------------- secondo schermo
+    def peek(self, source_id, t, item_id=None):
+        """Chiede il fotogramma della clip originale `source_id` al tempo `t` (secondi
+        del file). Con item_id usa il colore di quel pezzo della timeline. Conta solo
+        l'ultima richiesta: trascinando non si accodano fotogrammi vecchi."""
+        with self._peek_cond:
+            self._peek_req = (source_id, float(t), item_id)
+            self._peek_cond.notify()
+
+    def _peek_worker(self):
+        while self._running:
+            with self._peek_cond:
+                while self._running and self._peek_req is None and not self._peek_drops:
+                    self._peek_cond.wait(0.1)
+                if not self._running:
+                    return
+                drops, self._peek_drops = self._peek_drops, []
+                req, self._peek_req = self._peek_req, None
+            for d in drops:
+                if d == "*":
+                    self.peek_pool.clear()
+                else:
+                    self.peek_pool.drop(d)
+            if req is None:
+                continue
+            try:
+                f = self._peek_render(*req)
+                if f is not None:
+                    f.mode = "peek"
+                    self.peek_ready.emit(f)
+            except Exception:
+                import traceback
+
+                traceback.print_exc()
+
+    def _peek_render(self, source_id, t, item_id):
+        pr = self.get_project()
+        src = pr.source(source_id)
+        if src is None or not src.get("has_video"):
+            return Frame(t, None, label=source_id or "")
+        h = preview_height(int(src.get("height") or pr.size[1]), self.src_quality)
+        fs = self.peek_pool.get(self.path_for(src, h))
+        if fs is None:
+            f = Frame(t, None, label=source_id + " (file non trovato)")
+            f.mode = "peek"
+            return f
+        t = min(max(0.0, t), max(0.0, float(src.get("duration") or 0.0) - 0.5 / max(fs.fps, 1.0)))
+        img = fs.get(t, h)
+        if img is None:
+            f = Frame(t, None, label=source_id)
+            f.mode = "peek"
+            return f
+        it = pr.item(item_id) if item_id else None
+        grades = pr.grades_at(it, it["start"]) if it else pr.grades_for_source(source_id)
+        img, lut, key, graded = self._grade(np.ascontiguousarray(img), grades)
+        f = Frame(t, img, lut, key, graded, None, source_id)
+        f.mode = "peek"
+        return f
 
     # ------------------------------------------------------------ orologio
     def _tick(self):
@@ -318,14 +391,15 @@ class Engine(QObject):
         key = color.grade_key(grades)
         if key == "identity" or self.bypass or self.fx_off:
             return None, "identity"
-        lut = self._lut_cache.get(key)
-        if lut is None:
-            lut = color.build_lut(grades, 33)
-            self._lut_cache[key] = lut
-            while len(self._lut_cache) > 48:
-                self._lut_cache.popitem(last=False)
-        else:
-            self._lut_cache.move_to_end(key)
+        with self._lut_lock:
+            lut = self._lut_cache.get(key)
+            if lut is None:
+                lut = color.build_lut(grades, 33)
+                self._lut_cache[key] = lut
+                while len(self._lut_cache) > 48:
+                    self._lut_cache.popitem(last=False)
+            else:
+                self._lut_cache.move_to_end(key)
         return lut, key
 
     def _render(self, t, still=False):
@@ -347,12 +421,13 @@ class Engine(QObject):
         il visore; senza scheda video la applica qui il processore."""
         lut, key = self._lut_for(grades)
         if lut is not None and self.cpu_grade:
-            cl = self._cpu_cache.get(key)
-            if cl is None:
-                cl = color.CpuLut(lut)
-                self._cpu_cache[key] = cl
-                while len(self._cpu_cache) > 6:
-                    self._cpu_cache.popitem(last=False)
+            with self._lut_lock:
+                cl = self._cpu_cache.get(key)
+                if cl is None:
+                    cl = color.CpuLut(lut)
+                    self._cpu_cache[key] = cl
+                    while len(self._cpu_cache) > 6:
+                        self._cpu_cache.popitem(last=False)
             return cl.apply(img), None, "identity", True
         return img, lut, key, False
 

@@ -195,6 +195,19 @@ per esempio con un doppio clic su un pezzo).
    (non ha i dati del giroscopio come telefoni e GoPro), quindi non toglie
    il mosso dentro al singolo fotogramma né le deformazioni degli scossoni
    forti.
+   **Filtro per colore, anteprime e secondo schermo.** Nell'elenco clip,
+   sotto il titolo, ci sono le pastiglie dei colori: accendine una o più
+   (es. verde e giallo) e vedi solo le clip con quelle etichette; la
+   pastiglia «–» è per le clip senza etichetta, «Tutte» toglie il filtro.
+   Anche le parti (sottoclip) hanno la loro miniatura, presa dal
+   fotogramma d'ingresso. Nel montaggio, a sinistra del visore della
+   timeline c'è lo **schermo sorgente** (Vista → «Secondo schermo»): mostra
+   la clip scelta in timeline o nell'elenco (passando il mouse sull'elenco
+   scorre la clip), con sotto dimensione, fps e codec. Rifilando una clip
+   in timeline vedi il fotogramma del bordo che trascini.
+   **Ritaglio dinamico** (Y, pulsante nella barra della timeline): con la
+   modalità accesa, trascina una clip e il suo contenuto scorre: posizione
+   e durata restano, cambiano inizio e fine nella clip originale.
 9. **Esporta** (Ctrl/Cmd+E): MP4 H.264 o MOV ProRes 422, sempre dai file
    originali.
 

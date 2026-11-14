@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QComboBox, QSizePolicy, QStackedWidget, QTabBar, 
 from .. import __version__, stabilize, audio, color, media, paths, update
 from .. import speed as spd
 from ..playback import Engine
-from ..project import Project
+from ..project import Project, is_overlay
 from .bin_panel import TAGS, BinPanel
 from .color_panel import ColorPanel
 from .export_dialog import ExportDialog
@@ -54,7 +54,8 @@ C: taglia alla testina · Canc: elimina · Maiusc+Canc: elimina e chiudi lo spaz
 N: aggancio magnetico on/off (Maiusc mentre trascini lo sospende) · + / −: zoom · Maiusc+Z: adatta · Alt+trascina: muovi solo video o solo audio<br>
 M: segnaposto alla testina (anche mentre suona, per i battiti) · Maiusc+M: segnaposto sul pezzo<br>
 Ctrl/Cmd+T: dissolvenza incrociata con la clip precedente · Maiusc+F: fermo immagine alla testina<br>
-Ctrl/Cmd+Alt+trascina una clip, oppure , e . : scorre il contenuto lasciando posizione e durata<br>
+Y: ritaglio dinamico on/off (con la modalità accesa, trascina una clip per scorrere il contenuto lasciando posizione e durata)<br>
+Ctrl/Cmd+Alt+trascina una clip, oppure , e . : lo stesso senza la modalità<br>
 Quadratini in alto agli angoli delle clip: dissolvenze · linea azzurra su scritte e riquadri: opacità<br>
 Volume disegnato: clic sulla linea gialla di una clip audio, trascina il punto, doppio clic per toglierlo<br>
 1 / 2 / 3 / 0: valuta la clip (verde, giallo, rosso, nessuna) · Maiusc+R: ripple on/off<br>
@@ -78,6 +79,7 @@ class MainWindow(QMainWindow):
         self.store = audio.AudioStore()
         self.jobs = media.JobRunner()
         self.thumbs: dict[str, QPixmap] = {}
+        self._sub_thumb_at: dict[str, float] = {}  # parte -> istante della miniatura già richiesta
         self.peaks: dict[str, object] = {}
         self.proxies: dict[str, str] = {}
         self.marks: dict[str, list] = {}
@@ -162,9 +164,34 @@ class MainWindow(QMainWindow):
         tl.addLayout(head)
         self.viewer_holder = QVBoxLayout()
         self.viewer_holder.setContentsMargins(0, 0, 0, 0)
+        self.mon_holder = QVBoxLayout()
+        self.mon_holder.setContentsMargins(0, 0, 0, 0)
         vrow = QHBoxLayout()
-        vrow.setSpacing(4)
-        vrow.addLayout(self.viewer_holder, 1)
+        vrow.setSpacing(8)
+
+        def caption():
+            c = QLabel("")
+            c.setMinimumWidth(10)
+            c.setTextFormat(Qt.RichText)
+            c.setFixedHeight(34)
+            c.setStyleSheet("color:#9a9a9a;")
+            return c
+
+        # a sinistra lo schermo della sorgente, a destra quello della timeline
+        self.mon_box = QWidget()
+        mv = QVBoxLayout(self.mon_box)
+        mv.setContentsMargins(0, 0, 0, 0)
+        mv.setSpacing(2)
+        mv.addLayout(self.mon_holder, 1)
+        self.mon_info = caption()
+        mv.addWidget(self.mon_info)
+        vrow.addWidget(self.mon_box, 1)
+        tv = QVBoxLayout()
+        tv.setSpacing(2)
+        tv.addLayout(self.viewer_holder, 1)
+        self.tl_info = caption()
+        tv.addWidget(self.tl_info)
+        vrow.addLayout(tv, 1)
         self.meter = LevelMeter()
         vrow.addWidget(self.meter)
         tl.addLayout(vrow, 1)
@@ -172,6 +199,7 @@ class MainWindow(QMainWindow):
         self.src_viewer_holder.setContentsMargins(0, 0, 0, 0)
         self.viewer = None
         self.src_viewer = None
+        self.mon_viewer = None
         tr = QHBoxLayout()
         tr.setSpacing(4)
 
@@ -303,6 +331,7 @@ class MainWindow(QMainWindow):
             self.show_current_source()
         else:
             self.set_viewer_mode("timeline")
+            self._update_monitor()
 
     def _project_chosen(self, kind, path):
         if kind == "open":
@@ -389,6 +418,19 @@ class MainWindow(QMainWindow):
     def _bin_hover(self, rid, frac):
         """Passando il mouse sulla lista, il visore piccolo mostra la clip sotto
         al puntatore (da sinistra a destra = dall'inizio alla fine)."""
+        if self.page == PAGE_MONTAGE:
+            # nel montaggio il visore della timeline non si tocca: si muove lo schermo sorgente
+            if not rid:
+                self._update_monitor()
+                return
+            src, a, b = self.project.range_of(rid)
+            if src is None or not src.get("has_video"):
+                return
+            fr = 1.0 / max(src.get("fps") or 25, 1)
+            t = a + frac * max(0.0, b - a - fr)
+            self.engine.peek(src["id"], t)
+            self._mon_caption(rid, src, a, b, t)
+            return
         if self.engine.playing or self.page != PAGE_CLIP:
             return
         if not rid:
@@ -464,17 +506,21 @@ class MainWindow(QMainWindow):
 
     def _make_viewer(self, gpu: bool):
         """Crea i due visori: quello grande (timeline) e quello piccolo (clip)."""
-        for old, holder in ((self.viewer, self.viewer_holder), (self.src_viewer, self.src_viewer_holder)):
+        for old, holder in ((self.viewer, self.viewer_holder), (self.src_viewer, self.src_viewer_holder),
+                            (self.mon_viewer, self.mon_holder)):
             if old is not None:
                 holder.removeWidget(old)
                 old.deleteLater()
         v = self._new_viewer(gpu)
         sv = self._new_viewer(gpu)
+        mv = self._new_viewer(gpu)
         self.engine.cpu_grade = isinstance(v, CpuViewer)
         self.viewer_holder.addWidget(v)
         self.src_viewer_holder.addWidget(sv)
+        self.mon_holder.addWidget(mv)
         self.viewer = v
         self.src_viewer = sv
+        self.mon_viewer = mv
         v.overlay.drag_begin.connect(self._viewer_drag_begin)
         v.overlay.drag_move.connect(self._viewer_drag_move)
         v.overlay.drag_end.connect(self._viewer_drag_end)
@@ -485,7 +531,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda: self._switch_cpu(msg))
 
     def _switch_cpu(self, msg):
-        if isinstance(self.viewer, CpuViewer) and isinstance(self.src_viewer, CpuViewer):
+        if all(isinstance(x, CpuViewer) for x in (self.viewer, self.src_viewer, self.mon_viewer)):
             return
         self._make_viewer(False)
         self._apply_aspect()
@@ -579,6 +625,8 @@ class MainWindow(QMainWindow):
                             checkable=True, checked=True)
         act_r = act(m, "Ripple", lambda on: self.timeline.btn_ripple.setChecked(on), "Shift+R", checkable=True)
         self.timeline.btn_ripple.toggled.connect(act_r.setChecked)
+        act_s = act(m, "Ritaglio dinamico", lambda on: self.timeline.btn_slip.setChecked(on), "Y", checkable=True)
+        self.timeline.btn_slip.toggled.connect(act_s.setChecked)
         self.timeline.btn_snap.toggled.connect(self.act_snap.setChecked)
         act(m, "Zoom avanti", lambda: self.timeline.view.zoom(1.4), ["+", "="])
         act(m, "Zoom indietro", lambda: self.timeline.view.zoom(1 / 1.4), "-")
@@ -636,6 +684,9 @@ class MainWindow(QMainWindow):
         act(m, "Crea proxy per tutte le clip", lambda: self.bin_action("proxy", [s["id"] for s in
                                                                                 self.project.sources]))
         m.addSeparator()
+        self.act_mon2 = act(m, "Secondo schermo con la clip originale (montaggio)", self.set_monitor2, checkable=True,
+                            checked=self.cfg.get("monitor2", True))
+        self.mon_box.setVisible(self.cfg.get("monitor2", True))
         self.act_gpu = act(m, "Anteprima con la scheda video (OpenGL)", self.set_gpu, checkable=True,
                            checked=not self.engine.cpu_grade)
 
@@ -886,6 +937,8 @@ class MainWindow(QMainWindow):
         self.bin.selection_changed.connect(self._bin_selection)
         self.bin.request.connect(self.bin_action)
         self.bin.hover.connect(self._bin_hover)
+        e.peek_ready.connect(self._on_peek)
+        self.bin.rebuilt.connect(self._schedule_sub_thumbs)
         self.bin.import_files.connect(lambda paths, target: self.import_paths(paths, target or False))
         sb = self.source_bar
         sb.seek.connect(lambda t: self.engine.seek(t))
@@ -1061,6 +1114,7 @@ class MainWindow(QMainWindow):
         self._mark_dirty()
         self._update_name_label()
         self.engine.refresh()
+        self._update_monitor()
 
     # ============================================================ lista clip
     def _bin_selection(self, ids):
@@ -1068,6 +1122,7 @@ class MainWindow(QMainWindow):
         if self.color_panel.target() == "item":
             self.color_panel.set_target("source")
         self.refresh_color_panel()
+        self._update_monitor()
 
     def _select_sub_from_bar(self, sid):
         self.bin.select([sid])
@@ -1081,6 +1136,7 @@ class MainWindow(QMainWindow):
         if sub:
             self.bin.update_subclip(sub)
             self._update_source_bar()
+            self._schedule_sub_thumbs()
 
     def mark_in(self):
         self._mark(0)
@@ -1101,6 +1157,7 @@ class MainWindow(QMainWindow):
             else:
                 self.project.update_subclip(sub["id"], tin=min(sub["in"], t - self.engine.frame_step()), tout=t)
             self.bin.update_subclip(sub)
+            self._schedule_sub_thumbs()
             self._mark_dirty()
         else:
             mk = self.marks.setdefault(self.engine.source_id, [None, None])
@@ -1427,6 +1484,7 @@ class MainWindow(QMainWindow):
             self.color_panel.set_target("item")
         self.refresh_color_panel()
         self.refresh_inspector()
+        self._update_monitor()
 
     def _src_target_sticky(self):
         return False
@@ -1868,13 +1926,135 @@ class MainWindow(QMainWindow):
         self.engine.seek(min(t, self.project.item_end(it) - self.project.frame()))
 
     def slip_preview(self, iid):
-        """Durante lo scorrimento mostra il primo fotogramma del pezzo."""
+        """Durante lo scorrimento mostra il primo fotogramma del pezzo (e, a fianco,
+        quello della clip originale da cui parte ora)."""
         it = self.project.item(iid)
         if it is None:
             return
         if self.engine.mode != "timeline":
             self.set_viewer_mode("timeline")
         self.engine.seek(it["start"])
+        self._edge_preview(it, "left", "Il pezzo ora parte da")
+
+    def trim_preview(self, iid, edge):
+        """Allungando o accorciando un pezzo: nello schermo sorgente il fotogramma
+        del bordo che si sta trascinando; nel visore della timeline, quello nel montaggio."""
+        pr = self.project
+        it = pr.item(iid)
+        if it is None:
+            return
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")
+        vit = it
+        if is_overlay(it) or not (pr.source(it.get("source", "")) or {}).get("has_video"):
+            vit = next((g for g in pr.linked(it) if not is_overlay(g)
+                        and (pr.source(g.get("source", "")) or {}).get("has_video")), None)
+        if vit is None:
+            return
+        self.engine.seek(vit["start"] if edge == "left" else pr.item_end(vit) - pr.frame())
+        self._edge_preview(vit, edge, "Inizio del pezzo" if edge == "left" else "Fine del pezzo")
+
+    def _edge_preview(self, it, edge, text):
+        pr = self.project
+        src = pr.source(it.get("source", ""))
+        if src is None or not src.get("has_video") or self.page != PAGE_MONTAGE:
+            return
+        fps = src.get("fps") or 25
+        if it.get("freeze") is not None:
+            t = float(it["freeze"])
+        elif edge == "left":
+            t = float(it["src_in"])
+        else:
+            t = max(float(it["src_in"]), float(it["src_out"]) - 1.0 / max(fps, 1))
+        self.engine.peek(src["id"], t, it["id"])
+        a, b = float(it.get("src_in", t)), float(it.get("src_out", t))
+        self.mon_info.setText(
+            f"<b style='color:#e8a33d'>{text}</b>  <span style='color:#cfcfcf'>{tc(t, fps)}</span> del file"
+            f"<br>{self._specs(src)}  ·  usa {tc(a, fps)} → {tc(b, fps)}")
+
+    # ------------------------------------------------------ secondo schermo
+    @staticmethod
+    def _specs(src):
+        """«1920×1080 · 29.97 fps · hevc» della clip originale."""
+        if not src.get("has_video"):
+            return "solo audio"
+        fps = f"{float(src.get('fps') or 0):.2f}".rstrip("0").rstrip(".")
+        out = [f"{src.get('width')}×{src.get('height')}", f"{fps} fps"]
+        if src.get("codec"):
+            out.append(str(src["codec"]).upper())
+        return " · ".join(out)
+
+    def _on_peek(self, f):
+        if f.img is not None:
+            h, w = f.img.shape[:2]
+            self.mon_viewer.aspect = w / max(h, 1)
+        self.mon_viewer.set_frame(f)
+
+    def set_monitor2(self, on):
+        self.mon_box.setVisible(on)
+        self.cfg["monitor2"] = bool(on)
+        if self.act_mon2.isChecked() != on:
+            self.act_mon2.setChecked(on)
+        if on:
+            self._update_monitor()
+
+    def _mon_caption(self, ref, src, a, b, t=None):
+        pr = self.project
+        fps = src.get("fps") or pr.fps
+        name = f"<b style='color:#e8a33d'>{ref}</b>  <span style='color:#cfcfcf'>{src.get('label') or src['name']}</span>"
+        rng = f"  ·  {tc(a, fps)} → {tc(b, fps)}" if (a > 1e-6 or abs(b - src['duration']) > 1e-6) else ""
+        at = f"<br>{self._specs(src)}{rng}"
+        if t is not None:
+            at += f"  ·  <span style='color:#cfcfcf'>{tc(t, fps)}</span>"
+        self.mon_info.setText(name + at)
+
+    def _update_monitor(self):
+        """Schermo sorgente: la clip scelta nell'elenco o in timeline, con le sue
+        caratteristiche (dimensione, fps, codec)."""
+        if self.page != PAGE_MONTAGE or not self.mon_box.isVisible():
+            return
+        pr = self.project
+        pw, ph = pr.size
+        self.tl_info.setText(f"<b style='color:#e8a33d'>TIMELINE</b><br>{pw}×{ph} · {pr.fps:g} fps")
+        sel = [pr.item(i) for i in self.timeline.view.selection]
+        sel = [i for i in sel if i is not None]
+        if self.active_panel == "timeline" and sel:
+            vids = sorted((i for i in sel if not is_overlay(i) and pr.source(i.get("source", ""))),
+                          key=lambda i: (i["start"], i["track"]))
+            if not vids:
+                kinds = {"text": "Scritta", "box": "Riquadro"}
+                self.mon_info.setText(f"<b style='color:#e8a33d'>{kinds.get(sel[0].get('kind'), 'Elemento')}</b>"
+                                      "<br>senza clip originale")
+                self.engine.peek("", 0.0)
+                return
+            it = vids[0]
+            src = pr.source(it["source"])
+            t0 = self.engine.position
+            if it.get("freeze") is not None:
+                st = float(it["freeze"])
+            elif it["start"] <= t0 < pr.item_end(it):
+                st = float(pr.src_time(it, t0))
+            else:
+                st = float(it["src_in"])
+            self.engine.peek(src["id"], st, it["id"] if src.get("has_video") else None)
+            fps = src.get("fps") or pr.fps
+            sp = pr.speed(it)
+            more = f"  ·  +{len(vids) - 1} selezionati" if len(vids) > 1 else ""
+            spd_txt = f"  ·  velocità {sp:g}×" if abs(sp - 1.0) > 1e-6 else ""
+            ref = it.get("origin") or src["id"]
+            self.mon_info.setText(
+                f"<b style='color:#e8a33d'>{ref}</b>  <span style='color:#cfcfcf'>{src.get('label') or src['name']}</span>"
+                f"{more}<br>{self._specs(src)}  ·  usa {tc(it['src_in'], fps)} → {tc(it['src_out'], fps)}{spd_txt}")
+            return
+        ids = self.bin.selected_ids()
+        ref = ids[0] if ids else self.selected_ref
+        src, a, b = pr.range_of(ref or "")
+        if src is None:
+            self.mon_info.setText("<span style='color:#8d8d8d'>SORGENTE<br>scegli una clip</span>")
+            self.engine.peek("", 0.0)
+            return
+        self.engine.peek(src["id"], a)
+        self._mon_caption(ref, src, a, b)
 
     def marker_or_part(self):
         """Tasto M: sul visore sorgente crea la parte, in timeline mette un segnaposto
@@ -2337,6 +2517,36 @@ class MainWindow(QMainWindow):
             parts.append("audio…")
         self.bin.set_status(sid, " · ".join(parts))
 
+    def _schedule_sub_thumbs(self):
+        """Ogni parte ha la sua miniatura (il fotogramma d'ingresso). Si aspetta un
+        attimo, così trascinando i segni I/O non parte un lavoro per ogni pixel."""
+        if not hasattr(self, "_sub_thumb_timer"):
+            self._sub_thumb_timer = QTimer(self)
+            self._sub_thumb_timer.setSingleShot(True)
+            self._sub_thumb_timer.setInterval(350)
+            self._sub_thumb_timer.timeout.connect(self._make_sub_thumbs)
+        self._sub_thumb_timer.start()
+
+    def _make_sub_thumbs(self):
+        emit = self.media_event.emit
+        for src in self.project.sources:
+            path = src["path"]
+            if not src.get("has_video") or not os.path.exists(path):
+                continue
+            for sub in self.project.subclips_of(src["id"]):
+                at = round(float(sub["in"]), 3)
+                if self._sub_thumb_at.get(sub["id"]) == at:
+                    continue
+                self._sub_thumb_at[sub["id"]] = at
+
+                def do(sid=sub["id"], path=path, at=at):
+                    try:
+                        emit("thumb", sid, media.make_thumb(path, at, part=True))
+                    except Exception:
+                        pass
+
+                self.jobs.submit(do)
+
     def start_source_jobs(self, src):
         sid = src["id"]
         path = src["path"]
@@ -2416,6 +2626,8 @@ class MainWindow(QMainWindow):
         self.engine.invalidate_source(None)
         self.engine._lut_cache.clear()
         self.thumbs.clear()
+        self._sub_thumb_at.clear()
+        self.bin._icons.clear()
         self.peaks.clear()
         self.proxies.clear()
         self.marks.clear()

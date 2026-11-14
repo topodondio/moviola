@@ -63,8 +63,10 @@ def peaks_path(src_path: str) -> str:
     return os.path.join(paths.cache_dir("audio"), paths.file_key(src_path) + ".peaks.npy")
 
 
-def thumb_path(src_path: str) -> str:
-    return os.path.join(paths.cache_dir("miniature"), paths.file_key(src_path) + ".jpg")
+def thumb_path(src_path: str, at: float | None = None) -> str:
+    """Miniatura della clip intera; con `at` quella di una parte (fotogramma d'ingresso)."""
+    tag = "" if at is None else f"_{int(round(at * 1000))}"
+    return os.path.join(paths.cache_dir("miniature"), paths.file_key(src_path) + tag + ".jpg")
 
 
 def proxy_path(src_path: str) -> str:
@@ -140,8 +142,9 @@ def make_peaks(src_path: str) -> np.ndarray:
     return pk
 
 
-def make_thumb(src_path: str, at: float = 1.0) -> str:
-    out = thumb_path(src_path)
+def make_thumb(src_path: str, at: float = 1.0, part: bool = False) -> str:
+    """Miniatura al tempo `at`. part=True: è quella di una parte (file a parte in cache)."""
+    out = thumb_path(src_path, at if part else None)
     if os.path.exists(out):
         paths.touch(out)
         return out

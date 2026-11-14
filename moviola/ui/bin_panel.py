@@ -18,7 +18,7 @@ import os
 from PySide6.QtCore import QItemSelectionModel, QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QStyle, QHBoxLayout, QHeaderView, QLabel, QMenu, QPushButton,
-                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+                               QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 
 MIME = "application/x-moviola-refs"
@@ -63,7 +63,6 @@ def _tag_row(item, tag):
         item.setIcon(0, QIcon(pm))
 
 
-GREEN, RED = TAGS[0][1], TAGS[3][1]
 FOLDER = "cartella:"  # cartella del disco (raggruppamento automatico)
 USERBIN = "raccoglitore:"  # cartella creata dall'utente
 MIME_BINS = "application/x-moviola-bins"
@@ -71,8 +70,7 @@ MIME_BINS = "application/x-moviola-bins"
 
 def _is_group(rid) -> bool:
     return str(rid).startswith((FOLDER, USERBIN))
-FILTERS = [("Tutte le clip", "all"), ("Solo le verdi", "green"), ("Nascondi le rosse", "nored"),
-           ("Non ancora usate", "unused")]
+FILTERS = [("Tutte le clip", "all"), ("Non ancora usate", "unused")]
 
 
 class BinTree(QTreeWidget):
@@ -241,6 +239,7 @@ class BinPanel(QWidget):
     request = Signal(str, list)  # azione, id
     import_files = Signal(list, object)  # file, cartella di arrivo (o None)
     hover = Signal(str, float)
+    rebuilt = Signal()  # l'elenco è stato ricostruito (clip e parti possono essere cambiate)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -277,10 +276,11 @@ class BinPanel(QWidget):
         self.filter = QComboBox()
         for text, key in FILTERS:
             self.filter.addItem(text, key)
-        self.filter.setToolTip("Quali clip mostrare. Valutazione veloce: 1 verde · 2 giallo · 3 rosso · 0 nessuna")
+        self.filter.setToolTip("Tutte le clip oppure solo quelle non ancora messe in timeline")
         self.filter.currentIndexChanged.connect(lambda _: self._apply_filter())
         top.addWidget(self.filter, 1)
         v.addLayout(top)
+        v.addLayout(self._tag_chips())
         row = QHBoxLayout()
         for text, req, tip in buttons:
             b = QPushButton(text)
@@ -311,6 +311,55 @@ class BinPanel(QWidget):
         tree.itemExpanded.connect(lambda it: self._remember_open(it, True))
         tree.itemCollapsed.connect(lambda it: self._remember_open(it, False))
         return tree, w
+
+    def _tag_chips(self):
+        """Una pastiglia per ogni colore: se ne accendi una o più, l'elenco mostra solo
+        le clip con quelle etichette (es. verdi e gialle). Nessuna accesa = tutte."""
+        row = QHBoxLayout()
+        row.setSpacing(3)
+        self._tag_sel: set[str] = set()
+        self._chips: dict[str, QToolButton] = {}
+        lab = QLabel("Mostra")
+        lab.setStyleSheet("color:#8d8d8d;")
+        row.addWidget(lab)
+        for name, col in TAGS + [("Senza etichetta", "")]:
+            b = QToolButton()
+            b.setCheckable(True)
+            b.setFixedSize(22, 18)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setToolTip(f"{name}: mostra solo le clip con questa etichetta\n"
+                         "(puoi accenderne più di una; spente tutte, vedi tutto)")
+            if col:
+                b.setStyleSheet(f"QToolButton {{ background:{col}; border:1px solid #1b1b1b; border-radius:3px; }}"
+                                "QToolButton:!checked { background:" + QColor(col).darker(210).name() + "; }"
+                                "QToolButton:checked { border:2px solid #f2f2f2; }")
+            else:
+                b.setText("–")
+                b.setStyleSheet("QToolButton { color:#bbb; background:#2d2f33; border:1px dashed #6a6a6a; border-radius:3px; }"
+                                "QToolButton:checked { border:2px solid #f2f2f2; color:#fff; }")
+            b.toggled.connect(lambda on, c=col: self._chip_toggled(c, on))
+            self._chips[col] = b
+            row.addWidget(b)
+        row.addStretch(1)
+        clear = QToolButton()
+        clear.setText("Tutte")
+        clear.setFocusPolicy(Qt.NoFocus)
+        clear.setToolTip("Togli il filtro per colore")
+        clear.clicked.connect(self.clear_tag_filter)
+        row.addWidget(clear)
+        return row
+
+    def _chip_toggled(self, col, on):
+        (self._tag_sel.add if on else self._tag_sel.discard)(col)
+        self._apply_filter()
+
+    def clear_tag_filter(self):
+        for b in self._chips.values():
+            b.blockSignals(True)
+            b.setChecked(False)
+            b.blockSignals(False)
+        self._tag_sel.clear()
+        self._apply_filter()
 
     # ------------------------------------------------------------------
     def _tree_for(self, src):
@@ -421,6 +470,8 @@ class BinPanel(QWidget):
                                       f"{fmt_dur(sub['in'])} → {fmt_dur(sub['out'])}"])
                 ch.setData(0, Qt.UserRole, sub["id"])
                 ch.setToolTip(0, lab)
+                if sub["id"] in self._icons:
+                    ch.setIcon(0, self._icons[sub["id"]])
                 _tag_row(ch, sub.get("tag"))
                 self._meta[sub["id"]] = (sub.get("tag"), sub["id"] in used_subs, src["id"])
                 _mark_used(ch, sub["id"] in used_subs)
@@ -448,6 +499,7 @@ class BinPanel(QWidget):
             self._active = t
         self._apply_filter()
         self._block = False
+        self.rebuilt.emit()
 
     def _apply_filter(self):
         """Nasconde le righe secondo il filtro scelto (le clip intere restano se
@@ -455,15 +507,17 @@ class BinPanel(QWidget):
         mode = self.filter.currentData()
         meta = getattr(self, "_meta", {})
 
+        want = self._tag_sel
+
         def ok(rid):
             tag, used, parent = meta.get(rid, (None, False, None))
-            if mode == "green":
-                return tag == GREEN
-            if mode == "nored":
-                ptag = meta.get(parent, (None,))[0] if parent else None
-                return tag != RED and ptag != RED
-            if mode == "unused":
-                return not used
+            if want:
+                # una parte senza etichetta propria vale come la sua clip
+                eff = tag or (meta.get(parent, (None,))[0] if parent else None)
+                if (eff or "") not in want:
+                    return False
+            if mode == "unused" and used:
+                return False
             return True
 
         for rid, it in self._items.items():
@@ -474,10 +528,7 @@ class BinPanel(QWidget):
                 continue
             if meta.get(rid, (None, False, None))[2] is None:
                 kids = [it.child(k) for k in range(it.childCount())]
-                show = ok(rid) or any(not k.isHidden() for k in kids)
-                if mode == "nored" and meta.get(rid, (None,))[0] == RED:
-                    show = False
-                it.setHidden(not show)
+                it.setHidden(not (ok(rid) or any(not k.isHidden() for k in kids)))
         for rid, it in self._items.items():
             if str(rid).startswith(FOLDER):
                 it.setHidden(all(it.child(k).isHidden() for k in range(it.childCount())))
@@ -492,7 +543,7 @@ class BinPanel(QWidget):
                     visible = hide_empty_bins(ch) or visible
                 else:
                     visible = visible or not ch.isHidden()
-            it.setHidden(mode != "all" and not visible)
+            it.setHidden((mode != "all" or bool(want)) and not visible)
             return visible
 
         for k in range(self.tree.topLevelItemCount()):
