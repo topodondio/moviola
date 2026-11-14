@@ -411,8 +411,34 @@ def test_bins(tmp):
     print("cartelle ok")
 
 
+def test_duplicate():
+    pr = P.Project()
+    pr.add_source("/x/a.mp4", info(10)); pr.add_subclip("clip1", 1, 3)
+    a = pr.append_to_timeline(["clip1.1"]); b = pr.append_to_timeline(["clip1.1"])   # 0-2 e 2-4 su V1/A1
+    txt = pr.add_text(0.0, dur=1.0, text="Titolo", color="#ff0000")
+    v1 = [i for i in a if i["kind"] == "video"][0]; v1["zoom"] = 1.5; v1["grade"]["exposure"] = 0.7
+    v2 = [i for i in b if i["kind"] == "video"][0]; pr.set_transition([v2["id"]], "dissolve", 0.5, True)
+    n = len(pr.items)
+    cp = pr.duplicate_items([v1["id"]])            # dopo c'è la seconda clip: la copia va nel primo spazio libero
+    assert len(cp) == 2 and len(pr.items) == n + 2 and all(abs(c["start"] - 4.0) < 1e-6 for c in cp)
+    cv = [c for c in cp if c["kind"] == "video"][0]; ca = [c for c in cp if c["kind"] == "audio"][0]
+    assert cv["zoom"] == 1.5 and cv["grade"]["exposure"] == 0.7 and cv["link"] == ca["link"] != v1["link"]
+    cv["grade"]["exposure"] = 0.1; assert v1["grade"]["exposure"] == 0.7   # copie indipendenti
+    ct = pr.duplicate_items([txt["id"]])[0]
+    assert ct["text"] == "Titolo" and ct["color"] == "#ff0000" and abs(ct["start"] - 1.0) < 1e-6 and ct["track"] == txt["track"]
+    c2 = pr.duplicate_items([v2["id"]])            # la transizione era con una clip non copiata: non si porta dietro
+    assert "trans" not in [c for c in c2 if c["kind"] == "video"][0]
+    both = pr.duplicate_items([v1["id"], v2["id"]])  # copiate insieme: la transizione tra le due resta
+    assert sum(1 for c in both if c.get("trans")) == 1 and min(c["start"] for c in both) >= 8.0 - 1e-6
+    for k in ("video", "audio"):                   # nessuna sovrapposizione
+        for tr in range(3):
+            its = pr.items_on(k, tr)
+            assert all(pr.item_end(x) <= y["start"] + 1e-6 for x, y in zip(its, its[1:]))
+    print("duplica ok")
+
+
 def main():
-    test_model(); test_color(); test_ripple()
+    test_model(); test_color(); test_ripple(); test_duplicate()
     with tempfile.TemporaryDirectory() as t:
         test_bins(t)
     with tempfile.TemporaryDirectory() as t:

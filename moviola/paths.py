@@ -35,7 +35,7 @@ def internal_dir(kind: str) -> str:
 # disco esterno scelto nelle preferenze. Se quel disco non è collegato si usa
 # per il momento una cache temporanea sul computer.
 _MEDIA_CACHE = None  # cartella scelta dall'utente (None = sul computer)
-MEDIA_KINDS = ("audio", "proxy", "miniature")
+MEDIA_KINDS = ("audio", "proxy", "miniature", "stabilizzazione")
 
 
 def set_media_cache(path):

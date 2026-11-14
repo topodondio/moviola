@@ -35,6 +35,7 @@ class FrameSource:
         self._pos = -1e9  # tempo dell'ultimo fotogramma decodificato
         self._pending = None  # fotogramma letto ma non ancora usato
         self._last = None  # (t, h, array)
+        self.last_time = 0.0  # tempo reale dell'ultimo fotogramma restituito
 
     def close(self):
         try:
@@ -89,6 +90,7 @@ class FrameSource:
                 if prev is not None:
                     arr = self._convert(prev, height)
                     self._last = (t, height, arr)
+                    self.last_time = self._frame_time(prev)
                     return arr
                 return self._last[2] if self._last else None
             ft = self._frame_time(frame)
@@ -101,6 +103,7 @@ class FrameSource:
                     ft = self._frame_time(prev)
                 arr = self._convert(frame, height)
                 self._last = (t, height, arr)
+                self.last_time = ft
                 return arr
             prev = frame
 

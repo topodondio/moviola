@@ -38,7 +38,8 @@ TRANSITIONS = {
 MARKER_COLORS = ["#e8a33d", "#e05050", "#4cbf4a", "#3d8fe0", "#c060d0", "#e0e0e0"]
 
 VIDEO_DEFAULTS = {"speed": 1.0, "bars": 0.0, "zoom": 1.0, "pos_x": 0.0, "pos_y": 0.0, "fade_in": 0.0, "fade_out": 0.0,
-                  "fade_in_color": "black", "fade_out_color": "black"}
+                  "fade_in_color": "black", "fade_out_color": "black",
+                  "stab": False, "stab_strength": 0.5, "stab_crop": 0.10}
 AUDIO_DEFAULTS = {"speed": 1.0, "gain_db": 0.0, "fade_in": 0.0, "fade_out": 0.0}
 TEXT_DEFAULTS = {"opacity": 1.0, "text": "Titolo", "font": "", "size": 8.0, "color": "#ffffff", "bold": True,
                  "italic": False,
@@ -683,6 +684,48 @@ class Project:
             i["track"] += dv if lane(i) == "video" else da
         self.data["items"] = [i for i in self.items if i["id"] not in ids]
         self.place_items(moving)
+
+    def duplicate_items(self, ids):
+        """Copie dei pezzi (con i collegati) sulle stesse tracce, subito dopo
+        gli originali o nel primo spazio libero che segue: non sovrascrive
+        nulla. Tutto ciò che è stato regolato (colore, effetti, testo, stile,
+        volume) viene copiato. Restituisce le copie."""
+        ids = self.expand_linked(ids)
+        group = [i for i in self.items if i["id"] in ids]
+        if not group:
+            return []
+        eps = 1e-6
+        a = min(i["start"] for i in group)
+        b = max(self.item_end(i) for i in group)
+        dt = self.snap(b - a)
+        keys = {(lane(i), i["track"]) for i in group}
+        others = [o for o in self.items if (lane(o), o["track"]) in keys]
+        for _ in range(10000):
+            need = dt
+            for c in group:
+                s0, s1 = c["start"] + dt, self.item_end(c) + dt
+                for o in others:
+                    if lane(o) == lane(c) and o["track"] == c["track"] and o["start"] < s1 - eps \
+                            and self.item_end(o) > s0 + eps:
+                        need = max(need, self.item_end(o) - c["start"])
+            if need <= dt + eps:
+                break
+            dt = self.snap(need)
+        links = {}
+        copies = []
+        for c in sorted(group, key=lambda i: i["start"]):
+            n = copy.deepcopy(c)
+            n["id"] = _uid()
+            if c.get("link"):
+                n["link"] = links.setdefault(c["link"], _uid())
+            n["start"] = self.snap(c["start"] + dt)
+            if n.get("trans"):
+                prev = self._prev_adjacent(c) if c["kind"] == "video" else None
+                if prev is None or prev["id"] not in ids:
+                    n.pop("trans")  # la transizione era con una clip che non è stata copiata
+            copies.append(n)
+        self.items.extend(copies)
+        return copies
 
     def trim_item(self, iid, edge, t, linked=True, ripple=False):
         """Allunga/accorcia un pezzo dal bordo 'left' o 'right' fino al tempo t

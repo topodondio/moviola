@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import threading
 
-from . import audio, color, paths
+from . import audio, color, paths, stabilize
 from . import speed as spd
 from .media import parse_ffmpeg_time
 
@@ -81,6 +81,21 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
     chains = []
     lut_cache = {}
 
+    leads = {}
+
+    def lead_of(path):
+        if path not in leads:
+            leads[path] = stabilize.video_lead(path)
+        return leads[path]
+
+    # la stabilizzazione ha bisogno dell'analisi: se manca (cache svuotata,
+    # altro computer) la si rifà adesso, prima di esportare
+    for it in project.items:
+        if it.get("kind") == "video" and it.get("stab"):
+            src = project.source(it["source"])
+            if src and os.path.exists(src["path"]) and stabilize.track_for(src["path"]) is None:
+                stabilize.analyze(src["path"])
+
     def black(label, dur):
         chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={dur:.6f},format=rgb24,setsar=1[{label}]")
 
@@ -132,10 +147,18 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
             gb = project.grades_at(it, seg_start + dur)
         key = color.grade_key(ga)
         key_b = color.grade_key(gb)
+        # stabilizzazione: per prima, sui tempi del file (prima di cambiare velocità)
+        c = f"[{idx}:v]"
+        track = stabilize.track_for(src["path"]) if it.get("stab") else None
+        if track is not None:
+            ws, hs = _fit_size(src, W, H, min(zoom, 1.0))
+            name = f"st{idx}"
+            c += stabilize.export_filters(track, it, name, ws, hs, src_t, src_t + span, lead_of(src["path"]),
+                                          os.path.join(workdir, f"stab_{idx}.cmd")) + ","
         if freeze:
-            c = f"[{idx}:v]trim=end_frame=1,setpts=PTS-STARTPTS,fps={fps:g}"
+            c += f"trim=end_frame=1,setpts=PTS-STARTPTS,fps={fps:g}"
         else:
-            c = f"[{idx}:v]setpts={_retime_expr(it, src_t, cs)},fps={fps:g}"
+            c += f"setpts={_retime_expr(it, src_t, cs)},fps={fps:g}"
             if pre_pad > 0:
                 c += f",tpad=start_mode=clone:start_duration={pre_pad:.6f}"
         c += f",scale={w1}:{h1}:flags=bicubic,setsar=1,format=rgb24"

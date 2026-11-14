@@ -12,7 +12,7 @@ from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence,
 from PySide6.QtWidgets import (QComboBox, QSizePolicy, QStackedWidget, QTabBar, QTabWidget, QToolBar, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QMainWindow, QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget)
 
-from .. import audio, color, media, paths
+from .. import stabilize, audio, color, media, paths
 from .. import speed as spd
 from ..playback import Engine
 from ..project import Project
@@ -86,6 +86,7 @@ class MainWindow(QMainWindow):
         self.grade_clip = None
         self._grade_ck = (None, 0.0)
         self._busy_proxy = set()
+        self._busy_stab = {}  # clip in analisi per la stabilizzazione -> avanzamento
         self._pending_imports = []
         self._import_results = {}
         self._import_bins = {}  # file -> cartella della lista clip
@@ -552,7 +553,7 @@ class MainWindow(QMainWindow):
         act(rm, "Giallo (forse)", lambda: self.rate_clips(YELLOW_TAG), "2")
         act(rm, "Rosso (da scartare)", lambda: self.rate_clips(RED_TAG), "3")
         act(rm, "Nessuna etichetta", lambda: self.rate_clips(None), "0")
-        act(m, "Duplica parte", lambda: self.bin_action("duplicate", self.bin.selected_ids()), "Ctrl+D")
+        act(m, "Duplica (parte nella lista, o pezzi in timeline)", self.duplicate_selected, "Ctrl+D")
         act(m, "Rinomina", self._rename_in_bin, "F2")
         act(m, "Accoda alla timeline", self.append_selected, "E")
         act(m, "Inserisci alla testina", self.insert_at_playhead, "F9")
@@ -733,7 +734,8 @@ class MainWindow(QMainWindow):
         for s in self.project.sources:
             p = s["path"]
             if os.path.exists(p):
-                out += [media.audio_cache_path(p), media.peaks_path(p), media.thumb_path(p), media.proxy_path(p)]
+                out += [media.audio_cache_path(p), media.peaks_path(p), media.thumb_path(p), media.proxy_path(p),
+                        stabilize.stab_path(p)]
         return out
 
     def _schedule_cache_check(self):
@@ -1364,6 +1366,12 @@ class MainWindow(QMainWindow):
                 for b in self.bin.tree.selected_bins():
                     self.bin_action("delete_bin:" + b, [])
 
+    def duplicate_selected(self):
+        if self.active_panel == "timeline" and self.timeline.view.selection:
+            self.timeline_action("duplicate", list(self.timeline.view.selection))
+        else:
+            self.bin_action("duplicate", self.bin.selected_ids())
+
     def jump_edit(self, direction):
         if self.engine.mode == "source":
             src = self.project.source(self.engine.source_id)
@@ -1399,6 +1407,20 @@ class MainWindow(QMainWindow):
             pr.checkpoint()
             pr.delete_items(ids, ripple=(action == "ripple_delete"))
             view.set_selection([])
+        elif action == "duplicate":
+            if not ids:
+                self.statusBar().showMessage("Seleziona in timeline quello che vuoi duplicare.", 4000)
+                return
+            pr.checkpoint()
+            copies = pr.duplicate_items(ids)
+            if not copies:
+                pr.drop_checkpoint()
+                return
+            view.set_selection([c["id"] for c in copies])
+            first = min(c["start"] for c in copies)
+            self.statusBar().showMessage(
+                f"Duplicato: {len(copies)} {'pezzo' if len(copies) == 1 else 'pezzi'} a {tc(first, pr.fps)} "
+                "(selezionati: trascinali dove servono).", 5000)
         elif action == "unlink":
             pr.checkpoint()
             pr.unlink(ids)
@@ -1618,6 +1640,7 @@ class MainWindow(QMainWindow):
                 info = (f"Con {prev.get('origin') or prev['source']}. La transizione è centrata sul taglio: "
                         "se prima o dopo mancano fotogrammi, si tiene fermo il primo o l'ultimo.")
             self.inspector.set_transition_info(info)
+        self._update_stab_info()
         texts = self._sel_items("text") + self._sel_items("shape")
         self.viewer.overlay.highlight = texts[0]["id"] if texts else None
         self.viewer.overlay.update()
@@ -1647,6 +1670,9 @@ class MainWindow(QMainWindow):
                     targets += [g for g in pr.linked(it) if g["kind"] == "audio"]
             for it in targets:
                 it[key] = value
+            if key.startswith("stab"):
+                self._ensure_stab(its)
+                self._update_stab_info()
         self._mark_dirty()
         self.timeline.view.update()
         if key in ("speed", "speed_curve", "duration"):
@@ -1654,6 +1680,65 @@ class MainWindow(QMainWindow):
             self._update_name_label()
             self.refresh_inspector()
         self.engine.refresh()
+
+    # ------------------------------------------------------ stabilizzazione
+    def _ensure_stab(self, items=None):
+        """Avvia l'analisi del movimento per le clip stabilizzate che non l'hanno ancora."""
+        pr = self.project
+        for it in (pr.items if items is None else items):
+            if it.get("kind") == "video" and it.get("stab"):
+                src = pr.source(it["source"])
+                if src and os.path.exists(src["path"]) and not stabilize.has_analysis(src["path"]):
+                    self.start_stab(src)
+
+    def start_stab(self, src):
+        sid = src["id"]
+        if sid in self._busy_stab:
+            return
+        self._busy_stab[sid] = 0.0
+        path = src["path"]
+        # il proxy si legge molto più in fretta e ha gli stessi fotogrammi
+        video = self.proxies.get(sid)
+        if not video or not os.path.exists(video):
+            video = path
+        emit = self.media_event.emit
+        cancel = self.jobs.cancel
+        last = [0.0]
+
+        def prog(f):
+            if f - last[0] >= 0.02 or f >= 1.0:
+                last[0] = f
+                emit("stab_progress", sid, f)
+
+        def do():
+            try:
+                emit("stab_progress", sid, 0.0)
+                emit("stab_ready", sid, stabilize.analyze(video, progress=prog, cancel=cancel, src_path=path))
+            except Exception as e:
+                emit("stab_ready", sid, "")
+                emit("error", sid, f"stabilizzazione: {e}")
+
+        self.jobs.submit(do)
+
+    def _update_stab_info(self):
+        it, _ = self._primary_item()
+        if it is None or it["kind"] != "video":
+            return
+        src = self.project.source(it["source"])
+        if not it.get("stab"):
+            self.inspector.set_stab_info("L'immagine viene ingrandita del «ritaglio» per nascondere i bordi. "
+                                         "Funziona meglio su tremolio e passi che su scossoni molto forti.")
+        elif src is None or not os.path.exists(src["path"]):
+            self.inspector.set_stab_info("File non trovato: impossibile analizzare il movimento.")
+        elif src["id"] in self._busy_stab:
+            self.inspector.set_stab_info(f"Analisi del movimento… {int(self._busy_stab[src['id']] * 100)}%  "
+                                         "(puoi continuare a lavorare)", busy=True)
+        elif stabilize.has_analysis(src["path"]):
+            z = stabilize.margins(stabilize.params(it)[1], 1.0)[0]
+            self.inspector.set_stab_info(f"Attiva: immagine ingrandita al {z * 100:.0f}%. "
+                                         "Nell'export i pezzi stabilizzati richiedono più tempo.")
+        else:
+            self.inspector.set_stab_info("In attesa dell'analisi del movimento…", busy=True)
 
     def _inspector_action(self, act):
         if act == "add_text":
@@ -2139,6 +2224,15 @@ class MainWindow(QMainWindow):
                 if src:
                     self.engine.invalidate_source(src["path"])
             self._set_status(key)
+        elif kind == "stab_progress":
+            if key in self._busy_stab:
+                self._busy_stab[key] = float(payload)
+                self._update_stab_info()
+        elif kind == "stab_ready":
+            self._busy_stab.pop(key, None)
+            self._schedule_cache_check()
+            self._update_stab_info()
+            self.engine.refresh()
         elif kind == "error":
             self._busy_proxy.discard(key)
             self.bin.set_status(key, "errore")
@@ -2185,6 +2279,8 @@ class MainWindow(QMainWindow):
                 self._set_status(sid)
             elif self.cfg.get("auto_proxy", True) and media.needs_proxy(src):
                 self.start_proxy(src)
+            # clip stabilizzate senza analisi (cache svuotata, altro computer): si rifà
+            self._ensure_stab([i for i in self.project.items if i.get("source") == sid])
 
     def start_proxy(self, src):
         if src is None or not src.get("has_video") or src["id"] in self._busy_proxy:

@@ -1036,6 +1036,7 @@ class TimelineView(QWidget):
             m.addAction("Scorri contenuto di 1 fotogramma ←\t,", lambda: self.action.emit("slip:-1", ids))
             m.addAction("Scorri contenuto di 1 fotogramma →\t.", lambda: self.action.emit("slip:1", ids))
         m.addAction("Taglia alla testina\tC", lambda: self.action.emit("split", ids))
+        m.addAction("Duplica\tCtrl+D", lambda: self.action.emit("duplicate", ids))
         m.addAction("Elimina\tCanc", lambda: self.action.emit("delete", ids))
         m.addAction("Elimina e chiudi lo spazio\tMaiusc+Canc", lambda: self.action.emit("ripple_delete", ids))
         m.addSeparator()

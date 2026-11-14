@@ -172,7 +172,20 @@ per esempio con un doppio clic su un pezzo).
    (anche trascinandolo nel visore), durata e dissolvenze; formati pronti
    *Schermo pieno*, *Fascia in basso*, *Sotto un titolo*. Una scritta su una
    traccia più alta finisce sopra al riquadro.
-8. **Esporta** (Ctrl/Cmd+E): MP4 H.264 o MOV ProRes 422, sempre dai file
+8. **Stabilizzazione** (scheda EFFETTI, riquadro «Stabilizzazione»): spunta
+   «Smorza vibrazioni e movimenti bruschi» sul pezzo selezionato. Moviola
+   analizza una volta il movimento della camera (in background: si continua
+   a lavorare), poi sposta e ruota ogni fotogramma per seguire un percorso
+   liscio. **Intensità**: bassa toglie solo il tremolio, alta ammorbidisce
+   anche i movimenti fino a una camera quasi ferma. **Ritaglio**: di quanto
+   si ingrandisce l'immagine per nascondere i bordi (più ritaglio = più
+   spazio per correggere). Anteprima ed export usano gli stessi numeri;
+   nell'export i pezzi stabilizzati richiedono più tempo. Funziona con
+   velocità, zoom, transizioni e colore. Limiti: lavora solo sull'immagine
+   (non ha i dati del giroscopio come telefoni e GoPro), quindi non toglie
+   il mosso dentro al singolo fotogramma né le deformazioni degli scossoni
+   forti.
+9. **Esporta** (Ctrl/Cmd+E): MP4 H.264 o MOV ProRes 422, sempre dai file
    originali.
 
 ### Segnaposti
@@ -238,6 +251,11 @@ piccolo o la timeline. **Maiusc+← / →** salta di un secondo.
 - Trascina per spostare (anche su un'altra traccia), i bordi per rifilare.
   Quello che finisce sotto viene sovrascritto (come in Resolve).
 - **C** taglia alla testina · **Canc** elimina · **Maiusc+Canc** elimina e chiude lo spazio.
+- **Ctrl/Cmd+D** (o tasto destro → Duplica) duplica i pezzi selezionati —
+  clip con il loro audio, scritte, riquadri, musica — con tutte le
+  regolazioni. Le copie vanno sulle stesse tracce subito dopo gli originali,
+  o nel primo spazio libero, senza sovrascrivere nulla, e restano
+  selezionate per trascinarle dove servono.
 - Finché video e audio sono collegati, allungarne o accorciarne uno cambia
   anche l'altro della stessa quantità; per lavorarli separati: clic destro →
   Scollega (o Alt mentre trascini).
@@ -302,8 +320,10 @@ moviola/
   decode.py      decodifica fotogrammi (PyAV)
   playback.py    motore di riproduzione (thread di decodifica + orologio)
   export.py      export con FFmpeg (lut3d + mix audio)
+  stabilize.py   stabilizzazione: analisi del movimento, percorso liscio, correzione
   ui/            interfaccia PySide6 (lista clip, visore GPU, timeline, colore)
 tests/test_core.py   test del motore senza interfaccia
+tests/test_stab.py   test della stabilizzazione (analisi, anteprima, export)
 ```
 
 Il progetto si salva in un file `.moviola` (JSON leggibile) con solo

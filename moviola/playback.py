@@ -12,7 +12,7 @@ from collections import OrderedDict, deque
 import numpy as np
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 
-from . import audio, color
+from . import audio, color, stabilize
 from .decode import SourcePool
 
 # risoluzione dell'anteprima rispetto a quella del progetto (l'export usa sempre quella piena)
@@ -368,7 +368,17 @@ class Engine(QObject):
         st = float(pr.src_time(it, t))
         st = min(max(0.0, st), max(0.0, float(src.get("duration") or 0.0) - 0.5 / max(fs.fps, 1.0)))
         img = fs.get(st, h)
-        return None if img is None else np.ascontiguousarray(img)
+        if img is None:
+            return None
+        img = np.ascontiguousarray(img)
+        if it.get("stab"):
+            try:
+                cor = stabilize.item_correction(it, src, fs.last_time)
+                if cor is not None:
+                    img = stabilize.warp(img, *cor)
+            except Exception:
+                pass  # l'anteprima non si ferma per questo: si vede il fotogramma non corretto
+        return img
 
     def _xf(self, it):
         return (float(it.get("zoom", 1.0) or 1.0), float(it.get("pos_x", 0.0) or 0.0),

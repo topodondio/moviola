@@ -92,6 +92,9 @@ class ColorButton(QPushButton):
             self.picked.emit(c.name())
 
 
+_FALLBACK = {("video", "stab"): False, ("video", "stab_strength"): 0.5, ("video", "stab_crop"): 0.10}
+
+
 def _group(title):
     gb = QGroupBox(title)
     form = QFormLayout(gb)
@@ -319,6 +322,30 @@ class Inspector(QWidget):
         f.addRow(row)
         return gb
 
+    def _stab_group(self):
+        gb, f = _group("Stabilizzazione")
+        ch = self._check("video", "stab", "Smorza vibrazioni e movimenti bruschi")
+        ch.setToolTip("Analizza il movimento della camera (una volta, in background) e corregge\n"
+                      "ogni fotogramma spostandolo e ruotandolo. Anteprima ed export coincidono.")
+        f.addRow(ch)
+        s = self._slider("video", "stab_strength", 0, 100, 1, 0, " %", 50, scale=100)
+        s.setToolTip("Basso: toglie solo il tremolio e lascia i movimenti come sono.\n"
+                     "Alto: ammorbidisce anche i movimenti, fino a una camera quasi ferma.")
+        f.addRow("Intensità", s)
+        s = self._slider("video", "stab_crop", 2, 30, 1, 0, " %", 10, scale=100)
+        s.setToolTip("Di quanto si ingrandisce l'immagine per nascondere i bordi.\n"
+                     "Più ritaglio = più spazio per correggere, ma inquadratura più stretta.")
+        f.addRow("Ritaglio", s)
+        self.stab_info = QLabel("")
+        self.stab_info.setWordWrap(True)
+        self.stab_info.setStyleSheet("color:#808080; font-size:11px;")
+        f.addRow(self.stab_info)
+        return gb
+
+    def set_stab_info(self, text, busy=False):
+        self.stab_info.setText(text)
+        self.stab_info.setStyleSheet("color:#e8a33d; font-size:11px;" if busy else "color:#808080; font-size:11px;")
+
     def set_transition_info(self, text):
         self.tr_info.setText(text)
 
@@ -345,6 +372,7 @@ class Inspector(QWidget):
         hint.setStyleSheet("color:#808080; font-size:11px;")
         f.addRow(hint)
         lay.addWidget(gb)
+        lay.addWidget(self._stab_group())
         gb, f = _group("Dissolvenze")
         cols = [("da/verso nero", "black"), ("da/verso bianco", "white")]
         row = QHBoxLayout()
@@ -539,6 +567,8 @@ class Inspector(QWidget):
                     val = duration
                 else:
                     val = item.get(key)
+                if val is None:  # progetti salvati prima che esistesse questa regolazione
+                    val = _FALLBACK.get((kind, key))
                 if val is None:
                     continue
                 if isinstance(w, ValueSlider):
