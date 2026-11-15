@@ -231,6 +231,26 @@ per esempio con un doppio clic su un pezzo).
 - I segnaposti attirano l'aggancio magnetico e le frecce ↑/↓ ci saltano
   sopra. Sul righello si trascinano; clic destro per nome, colore,
   eliminazione; doppio clic per rinominare.
+- **Alt+M** mette un segnaposto con nome e colore; **Alt+L** apre l'elenco
+  (vai a, rinomina, elimina, copia come capitoli per YouTube);
+  **Maiusc+↑/↓** salta al segnaposto precedente/successivo.
+
+### Segni I/O, inserisci e sovrascrivi
+
+- **I** e **O** segnano un tratto sulla timeline (sul visore sorgente
+  segnano invece la parte). **Maiusc+X** estrae il tratto chiudendo il
+  buco, **Alt+Maiusc+X** lo toglie lasciando il vuoto, **Alt+X** cancella
+  i segni.
+- **F9** inserisce la clip scelta alla testina spostando il resto in
+  avanti; **F10** la sovrascrive.
+- In esportazione, «Solo il tratto tra I e O» esporta solo quel tratto.
+
+### Pulizia dell'audio
+
+Nell'ispettore, per ogni pezzo audio: taglia-bassi (vento, rombo),
+riduzione del rumore di fondo e normalizzazione (volume portato a circa
+−16 dB, senza superare −1 dB di picco). Gli stessi filtri valgono in
+anteprima e in esportazione.
 
 ### Progetti, disco esterno e cache
 
@@ -256,7 +276,7 @@ per esempio con un doppio clic su un pezzo).
 
 ### Salvataggio automatico e copie di sicurezza
 
-Ogni 2 minuti, se ci sono modifiche, Moviola salva una copia automatica.
+Ogni minuto, se ci sono modifiche, Moviola salva una copia automatica.
 Se il programma si chiude male, alla riapertura propone di recuperarla.
 A ogni salvataggio la versione precedente del progetto viene conservata
 (le ultime 10): File → Copie di sicurezza dei progetti.
@@ -357,6 +377,9 @@ moviola/
   update.py      aggiornamenti da GitHub
   risorse/       icona del programma
   ui/            interfaccia PySide6 (lista clip, visore GPU, timeline, colore)
+    main_window.py  finestra principale (stato e collegamenti)
+    win_*.py        parti della finestra: costruzione, lista clip, timeline,
+                    ispettore, secondo schermo, colore, media, progetto
 tests/test_core.py   test del motore senza interfaccia
 tests/test_stab.py   test della stabilizzazione (analisi, anteprima, export)
 ```
