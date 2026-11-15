@@ -23,6 +23,90 @@ FORMATS = {
 }
 QUALITY = {"alta": 17, "buona": 20, "leggera": 24}
 
+# Modelli di esportazione. size: ("fisso", L, A) oppure ("altezza", A) = quell'altezza con
+# la proporzione del progetto, oppure None = come il progetto. fill: il formato è diverso da
+# quello del progetto → riempire il fotogramma (taglia i lati) invece di lasciare bande nere.
+PRESETS = [
+    {"key": "progetto", "group": "Generali", "label": "Come il progetto", "fmt": "mp4_h264", "size": None,
+     "quality": "alta", "fps": None, "fill": False,
+     "note": "Stessa dimensione e fotogrammi al secondo del progetto."},
+    {"key": "fullhd", "group": "Generali", "label": "Full HD 1080p", "fmt": "mp4_h264", "size": ("altezza", 1080),
+     "quality": "alta", "fps": None, "fill": False, "note": "MP4 H.264, 1080 righe."},
+    {"key": "uhd4k", "group": "Generali", "label": "4K UHD 2160p", "fmt": "mp4_h264", "size": ("altezza", 2160),
+     "quality": "alta", "fps": None, "fill": False, "note": "MP4 H.264, 2160 righe: file grande, esportazione lenta."},
+    {"key": "hd720", "group": "Generali", "label": "HD 720p leggero", "fmt": "mp4_h264", "size": ("altezza", 720),
+     "quality": "buona", "fps": None, "fill": False, "note": "File piccolo, per inviare o provare."},
+    {"key": "prores", "group": "Generali", "label": "Master ProRes (archivio / altri programmi)",
+     "fmt": "mov_prores", "size": None, "quality": "alta", "fps": None, "fill": False,
+     "note": "MOV ProRes 422: qualità massima, file molto grande."},
+    {"key": "yt1080", "group": "YouTube", "label": "YouTube · Full HD 1080p", "fmt": "mp4_h264",
+     "size": ("fisso", 1920, 1080), "quality": "alta", "fps": None, "fill": False,
+     "note": "16:9, 1920×1080."},
+    {"key": "yt4k", "group": "YouTube", "label": "YouTube · 4K 2160p", "fmt": "mp4_h264",
+     "size": ("fisso", 3840, 2160), "quality": "alta", "fps": None, "fill": False,
+     "note": "16:9, 3840×2160."},
+    {"key": "ytshorts", "group": "YouTube", "label": "YouTube Shorts (verticale 9:16)", "fmt": "mp4_h264",
+     "size": ("fisso", 1080, 1920), "quality": "alta", "fps": None, "fill": True,
+     "note": "Verticale 1080×1920, fino a 3 minuti."},
+    {"key": "igreel", "group": "Instagram", "label": "Instagram · Reel / Storia (verticale 9:16)",
+     "fmt": "mp4_h264", "size": ("fisso", 1080, 1920), "quality": "buona", "fps": None, "fill": True,
+     "note": "Verticale 1080×1920."},
+    {"key": "igpost45", "group": "Instagram", "label": "Instagram · Post verticale 4:5", "fmt": "mp4_h264",
+     "size": ("fisso", 1080, 1350), "quality": "buona", "fps": None, "fill": True, "note": "1080×1350."},
+    {"key": "igpost11", "group": "Instagram", "label": "Instagram · Post quadrato 1:1", "fmt": "mp4_h264",
+     "size": ("fisso", 1080, 1080), "quality": "buona", "fps": None, "fill": True, "note": "1080×1080."},
+    {"key": "tiktok", "group": "Altri social", "label": "TikTok (verticale 9:16)", "fmt": "mp4_h264",
+     "size": ("fisso", 1080, 1920), "quality": "buona", "fps": None, "fill": True, "note": "Verticale 1080×1920."},
+    {"key": "facebook", "group": "Altri social", "label": "Facebook · orizzontale 720p", "fmt": "mp4_h264",
+     "size": ("fisso", 1280, 720), "quality": "buona", "fps": None, "fill": False, "note": "16:9, 1280×720."},
+    {"key": "whatsapp", "group": "Altri social", "label": "WhatsApp / messaggi (leggero)", "fmt": "mp4_h264",
+     "size": ("altezza", 540), "quality": "leggera", "fps": None, "fill": False,
+     "note": "540 righe, file molto piccolo."},
+]
+_SUFFIX = {"fullhd": "FullHD", "uhd4k": "4K", "hd720": "720p", "prores": "ProRes", "yt1080": "YouTube-1080p",
+           "yt4k": "YouTube-4K", "ytshorts": "YouTube-Shorts", "igreel": "Instagram-Reel",
+           "igpost45": "Instagram-4x5", "igpost11": "Instagram-1x1", "tiktok": "TikTok",
+           "facebook": "Facebook-720p", "whatsapp": "WhatsApp"}
+for _p in PRESETS:
+    _p["suffix"] = _SUFFIX.get(_p["key"], "")
+PRESET_BY_KEY = {p["key"]: p for p in PRESETS}
+
+
+def preset_size(preset, project_size):
+    """(larghezza, altezza) pari risultante dal modello per quel progetto."""
+    w, h = project_size
+    sz = preset.get("size")
+    if sz is None:
+        out = (w, h)
+    elif sz[0] == "fisso":
+        out = (sz[1], sz[2])
+    else:
+        th = sz[1]
+        out = (int(round(w * th / max(h, 1))), th)
+    return out[0] - out[0] % 2, out[1] - out[1] % 2
+
+
+def safe_name(text):
+    """Nome adatto a un file (senza barre, due punti ecc.)."""
+    out = "".join("_" if c in '\\/:*?"<>|' or ord(c) < 32 else c for c in str(text)).strip(" .")
+    return out or "senza nome"
+
+
+def chapters(project):
+    """Capitoli dai segnaposti: [(nome, inizio, fine)]. Il primo parte da zero (se il
+    primo segnaposto non è lì c'è un capitolo «Inizio»), l'ultimo arriva alla fine."""
+    end = project.timeline_end()
+    pts = [(float(m["t"]), (m.get("label") or "").strip()) for m in project.markers if 0 <= m["t"] < end - 1e-6]
+    pts.sort(key=lambda p: p[0])
+    if not pts or pts[0][0] > 0.05:
+        pts.insert(0, (0.0, "Inizio"))
+    out = []
+    for n, (t, name) in enumerate(pts):
+        nxt = pts[n + 1][0] if n + 1 < len(pts) else end
+        if nxt - t > 0.04:
+            out.append((name or f"Capitolo {n + 1}", t, nxt))
+    return out
+
 
 def _fit_size(src, W, H, zoom):
     sw = src.get("width") or W
@@ -60,7 +144,7 @@ def _retime_expr(it, src_t, cs):
 
 
 def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=None, start=0.0, end=None,
-              text_renderer=None, size=None):
+              text_renderer=None, size=None, fps=None, fill=False):
     """Prepara LUT, scritte, mix audio e comando FFmpeg. Restituisce (cmd, workdir, durata).
 
     text_renderer(item, W, H, path) disegna una scritta in un PNG trasparente
@@ -74,7 +158,7 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
     workdir = workdir or tempfile.mkdtemp(prefix="moviola_export_")
     W, H = size or project.size
     W, H = int(W) - int(W) % 2, int(H) - int(H) % 2
-    fps = project.fps
+    fps = float(fps or project.fps)
     segs = project.video_segments(start, end)
 
     inputs = []
@@ -150,6 +234,9 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
         if orient.active(it):
             ow, oh = orient.canvas(src.get("width") or W, src.get("height") or H, it)
             osrc = dict(src, width=ow, height=oh)
+        if fill:   # formato diverso dal progetto: l'immagine riempie il fotogramma (taglia i lati)
+            sw_, sh_ = osrc.get("width") or W, osrc.get("height") or H
+            zoom *= max(W / sw_, H / sh_) / max(min(W / sw_, H / sh_), 1e-9)
         w1, h1 = _fit_size(osrc, W, H, zoom)
         x = (W - w1) / 2 + float(it.get("pos_x", 0.0) or 0.0) * W
         y = (H - h1) / 2 + float(it.get("pos_y", 0.0) or 0.0) * H

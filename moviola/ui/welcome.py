@@ -66,6 +66,28 @@ def _project_info(path):
     return txt, thumb, missing
 
 
+_LOGO = {}
+
+
+def _logo_pixmap(w=112, h=63):
+    """Logo di Moviola al centro di un riquadro 16:9 scuro (uguale per tutti i progetti)."""
+    if (w, h) not in _LOGO:
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QPainter
+
+        pm = QPixmap(w, h)
+        pm.fill(QColor(30, 31, 33))
+        logo = QPixmap(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                    "risorse", "icona.png"))
+        if not logo.isNull():
+            logo = logo.scaled(h - 8, h - 8, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            p = QPainter(pm)
+            p.drawPixmap(QPoint((w - logo.width()) // 2, (h - logo.height()) // 2), logo)
+            p.end()
+        _LOGO[(w, h)] = pm
+    return _LOGO[(w, h)]
+
+
 class ProjectsPanel(QWidget):
     """Scheda PROGETTI. Emette chosen(tipo, percorso): ('open', percorso),
     ('new', percorso da creare), ('browse', '')."""
@@ -193,12 +215,7 @@ class ProjectsPanel(QWidget):
         it = QListWidgetItem(f"{name}{'  (aperto)' if is_open else ''}\n{info}\nmodificato il {when}{warn}")
         it.setData(Qt.UserRole, p)
         it.setToolTip(p)
-        if thumb:
-            it.setIcon(QIcon(QPixmap(thumb)))
-        else:
-            pm = QPixmap(112, 63)
-            pm.fill(QColor(40, 42, 46))
-            it.setIcon(QIcon(pm))
+        it.setIcon(QIcon(_logo_pixmap()))   # in ogni progetto il logo di Moviola, non un fotogramma
         f = it.font()
         f.setPointSizeF(f.pointSizeF() + 0.5)
         it.setFont(f)

@@ -57,7 +57,7 @@ class MonitorMixin:
             return
         pr = self.project
         pw, ph = pr.size
-        self.tl_info.setText(f"<b style='color:#e8a33d'>TIMELINE</b><br>{pw}×{ph} · {pr.fps:g} fps")
+        self.tl_info.setText(f"<br>{pw}×{ph} · {pr.fps:g} fps")
         sel = [pr.item(i) for i in self.timeline.view.selection]
         sel = [i for i in sel if i is not None]
         if self.active_panel == "timeline" and sel:

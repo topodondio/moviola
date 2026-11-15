@@ -18,7 +18,8 @@ from .source_bar import SourceBar
 from .timeline import TimelinePanel
 from .viewer import CpuViewer, GlViewer
 
-from .common import GREEN_TAG, PAGE_CLIP, PAGE_MONTAGE, PAGE_PROJECTS, RED_TAG, TAB_CLIP, TAB_COLOR, TAB_EFFECTS, TAB_QSS, YELLOW_TAG
+from .export_page import ExportPage
+from .common import GREEN_TAG, PAGE_CLIP, PAGE_EXPORT, PAGE_MONTAGE, PAGE_PROJECTS, RED_TAG, TAB_CLIP, TAB_COLOR, TAB_EFFECTS, TAB_QSS, YELLOW_TAG
 
 
 class BuildMixin:
@@ -30,12 +31,8 @@ class BuildMixin:
         tl.setContentsMargins(6, 6, 6, 4)
         tl.setSpacing(4)
         head = QHBoxLayout()
-        self.mode_label = QLabel("TIMELINE")
-        self.mode_label.setObjectName("modeLabel")
         self.name_label = QLabel("")
         self.name_label.setStyleSheet("color:#bbb;")
-        head.addWidget(self.mode_label)
-        head.addSpacing(10)
         head.addWidget(self.name_label, 1)
         head.addWidget(QLabel("Anteprima"))
         self.preview_combo = QComboBox()
@@ -74,16 +71,23 @@ class BuildMixin:
             return c
 
         # a sinistra lo schermo della sorgente, a destra quello della timeline
+        def title(text):
+            t = QLabel(text)
+            t.setStyleSheet("color:#8d8d8d; font-weight:700; letter-spacing:2px; padding:0 0 2px 2px;")
+            return t
+
         self.mon_box = QWidget()
         mv = QVBoxLayout(self.mon_box)
         mv.setContentsMargins(0, 0, 0, 0)
         mv.setSpacing(2)
+        mv.addWidget(title("CLIP"))
         mv.addLayout(self.mon_holder, 1)
         self.mon_info = caption()
         mv.addWidget(self.mon_info)
         vrow.addWidget(self.mon_box, 1)
         tv = QVBoxLayout()
         tv.setSpacing(2)
+        tv.addWidget(title("TIMELINE"))
         tv.addLayout(self.viewer_holder, 1)
         self.tl_info = caption()
         tv.addWidget(self.tl_info)
@@ -169,30 +173,32 @@ class BuildMixin:
         self.pages.addWidget(self.projects)
         self.pages.addWidget(self.clip_split)
         self.pages.addWidget(self.mont_split)
+        self.export_page = ExportPage(self)
+        self.pages.addWidget(self.export_page)
         self.setCentralWidget(self.pages)
         self.page = None
         self.statusBar().showMessage("Pronto.")
 
     # ------------------------------------------------------------ schede
     def _build_page_bar(self):
-        """Le tre schede principali, al centro della barra in alto."""
+        """Le quattro schede principali, al centro della barra in alto."""
         self.page_bar = QTabBar()
         self.page_bar.setDrawBase(False)
         self.page_bar.setExpanding(False)
-        for lab in ("PROGETTI", "CLIP", "MONTAGGIO"):
+        for lab in ("ARCHIVIO PROGETTI", "SELEZIONE CLIP", "MONTAGGIO", "ESPORTAZIONE"):
             self.page_bar.addTab(lab)
         self.page_bar.setStyleSheet(
-            "QTabBar::tab { padding: 7px 26px; font-weight: 700; letter-spacing: 2px; color: #8d8d8d;"
+            "QTabBar::tab { padding: 7px 20px; font-weight: 700; letter-spacing: 1px; color: #8d8d8d;"
             " background: transparent; border: none; border-bottom: 2px solid transparent; }"
             "QTabBar::tab:selected { color: #f2f2f2; border-bottom: 2px solid #e8a33d; }"
             "QTabBar::tab:hover:!selected { color: #d0d0d0; }")
-        self.page_bar.setToolTip("Progetti (Ctrl/Cmd+Maiusc+1) · Clip (Ctrl/Cmd+Maiusc+2) · "
-                                 "Montaggio (Ctrl/Cmd+Maiusc+3)")
+        self.page_bar.setToolTip("Archivio progetti (Ctrl/Cmd+Maiusc+1) · Selezione clip (Ctrl/Cmd+Maiusc+2) · "
+                                 "Montaggio (Ctrl/Cmd+Maiusc+3) · Esportazione (Ctrl/Cmd+Maiusc+4)")
         self.page_bar.currentChanged.connect(self.set_page)
         return self.page_bar
 
     def set_page(self, index):
-        """Passa a una delle tre schede (0 progetti, 1 clip, 2 montaggio)."""
+        """Passa a una delle schede (0 archivio progetti, 1 selezione clip, 2 montaggio, 3 esportazione)."""
         if index == self.page:
             return
         prev = self.page
@@ -225,9 +231,18 @@ class BuildMixin:
             self.projects.refresh()
         elif index == PAGE_CLIP:
             self.show_current_source()
+        elif index == PAGE_EXPORT:
+            self.export_page.refresh()
         else:
             self.set_viewer_mode("timeline")
             self._update_monitor()
+
+    def playhead_time(self):
+        return float(self._timeline_pos())
+
+    def selected_timeline_items(self):
+        ids = set(self.timeline.view.selection)
+        return [i for i in self.project.items if i["id"] in ids]
 
     def _project_chosen(self, kind, path):
         if kind == "open":
@@ -477,7 +492,7 @@ class BuildMixin:
         act(m, "Nuova cartella nella lista clip", lambda: self.bin_action("new_bin", self.bin.selected_ids()),
             "Ctrl+Shift+N")
         m.addSeparator()
-        self.act_export = act(m, "Esporta video…", self.export_dialog, "Ctrl+E")
+        self.act_export = act(m, "Esportazione…", self.export_dialog, "Ctrl+E")
         m.addSeparator()
         act(m, "Esci", self.close, "Ctrl+Q")
 
@@ -604,9 +619,10 @@ class BuildMixin:
 
         self.act_column = act(m, "Mostra la colonna (clip, effetti, colore)", self.set_column_visible, "Ctrl+L",
                               checkable=True, checked=True)
-        act(m, "Progetti", lambda: self.set_page(PAGE_PROJECTS), "Ctrl+Shift+1")
-        act(m, "Clip", lambda: self.set_page(PAGE_CLIP), "Ctrl+Shift+2")
+        act(m, "Archivio progetti", lambda: self.set_page(PAGE_PROJECTS), "Ctrl+Shift+1")
+        act(m, "Selezione clip", lambda: self.set_page(PAGE_CLIP), "Ctrl+Shift+2")
         act(m, "Montaggio", lambda: self.set_page(PAGE_MONTAGE), "Ctrl+Shift+3")
+        act(m, "Esportazione", lambda: self.set_page(PAGE_EXPORT), "Ctrl+Shift+4")
         m.addSeparator()
         act(m, "Scheda Clip (montaggio)", lambda: self.show_tab(TAB_CLIP), "Ctrl+3")
         act(m, "Scheda Effetti (velocità, inquadratura, dissolvenze, scritte, riquadri)",
@@ -640,7 +656,7 @@ class BuildMixin:
             [(self.act_undo, "undo", "Annulla (Ctrl/Cmd+Z)"),
              (self.act_redo, "redo", "Ripeti (Ctrl/Cmd+Maiusc+Z)")],
             [(self.act_import, "import", "Importa clip (Ctrl/Cmd+I)"),
-             (self.act_export, "export", "Esporta il video (Ctrl/Cmd+E)")],
+             (self.act_export, "export", "Scheda Esportazione (Ctrl/Cmd+E)")],
         ]
         for k, grp in enumerate(groups):
             if k:

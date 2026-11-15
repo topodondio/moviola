@@ -1,2 +1,2 @@
 """Moviola: editor video leggero, non distruttivo, con colore in stile fotografico."""
-__version__ = "0.18.1"
+__version__ = "0.19.0"

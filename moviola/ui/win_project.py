@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import time
 
 from PySide6.QtCore import QTimer
@@ -11,10 +10,8 @@ from PySide6.QtWidgets import (QFileDialog, QMessageBox)
 
 from .. import audio, media, paths, update
 from ..project import Project
-from .export_dialog import ExportDialog
-from .text_render import render_png
 
-from .common import PAGE_CLIP, SHORTCUTS
+from .common import PAGE_CLIP, PAGE_EXPORT, SHORTCUTS
 
 
 class ProjectMixin:
@@ -241,21 +238,9 @@ class ProjectMixin:
             self.statusBar().showMessage("Ripetuto.", 1500)
 
     def export_dialog(self):
-        if self.project.timeline_end() <= 0:
-            QMessageBox.information(self, "Esporta", "La timeline è vuota.")
-            return
+        """Ctrl+E: apre la scheda ESPORTAZIONE."""
         self.engine.stop()
-        # cartella proposta: l'ultima usata, altrimenti quella del progetto, altrimenti Filmati
-        start = self.cfg.get("last_export_dir")
-        if not start or not os.path.isdir(start) or os.path.abspath(start) == os.path.expanduser("~"):
-            start = os.path.dirname(os.path.abspath(self.project.path)) if self.project.path else ""
-        if not start or not os.path.isdir(start):
-            movies = os.path.join(os.path.expanduser("~"), "Movies" if sys.platform == "darwin" else "Videos")
-            start = movies if os.path.isdir(movies) else os.path.expanduser("~")
-        d = ExportDialog(self.project, self.store, start, self,
-                         text_renderer=render_png)
-        if d.exec():
-            self.cfg["last_export_dir"] = os.path.dirname(d.path.text())
+        self.set_page(PAGE_EXPORT)
 
     # ============================================================== opzioni
     def set_quality(self, q):
@@ -305,6 +290,7 @@ class ProjectMixin:
             e.ignore()
             return
         self._clear_autosave()  # chiusura regolare: niente da recuperare
+        self.export_page.cancel()
         self.engine.shutdown()
         self.jobs.shutdown()
         self.cfg["geometry"] = bytes(self.saveGeometry().toHex()).decode()

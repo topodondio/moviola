@@ -46,7 +46,7 @@ sopra col mouse): nuovo, apri, salva, recenti · annulla, ripeti · importa,
 esporta. Le impostazioni del progetto stanno nel pulsante sopra la timeline.
 
 ```
-   PROGETTI          CLIP                         MONTAGGIO
+   ARCHIVIO PROGETTI   SELEZIONE CLIP        MONTAGGIO      ESPORTAZIONE
 ┌──────────────┬──────────────────────────────────────────────────────┐
 │ ▸ Neve 2026  │  [ visore grande della clip ]                       │
 │   clip1      │                                                     │
@@ -55,18 +55,20 @@ esporta. Le impostazioni del progetto stanno nel pulsante sopra la timeline.
 └──────────────┴──────────────────────────────────────────────────────┘
 ```
 
-Il programma ha **tre schede principali**, al centro della barra in alto
-(anche Ctrl/Cmd+Maiusc+1, 2, 3):
+Il programma ha **quattro schede principali**, al centro della barra in alto
+(anche Ctrl/Cmd+Maiusc+1, 2, 3, 4):
 
-1. **PROGETTI** – l'archivio dei progetti (vedi più sotto).
-2. **CLIP** – la fase di selezione: a sinistra l'elenco delle clip
+1. **ARCHIVIO PROGETTI** – i progetti, ciascuno con il logo di Moviola (vedi più sotto).
+2. **SELEZIONE CLIP** – la fase di selezione: a sinistra l'elenco delle clip
    **raggruppate per cartella** del disco, a destra un **visore grande** con
    la barra delle parti e i comandi I, O, + Parte, Accoda, Alla testina. Il
    menu «Anteprima» in alto a destra abbassa la qualità per una riproduzione
    più fluida (1/2, 1/3, 1/4).
 3. **MONTAGGIO** – timeline e visore della timeline; a sinistra una colonna
    con CLIP (solo l'elenco, per trascinare in timeline), EFFETTI e COLORE,
-   che si stringe o si nasconde (icona in alto o Ctrl/Cmd+L).
+   che si stringe o si nasconde (icona in alto o Ctrl/Cmd+L). Sopra i due
+   monitor i titoli CLIP (a sinistra) e TIMELINE (a destra).
+4. **ESPORTAZIONE** – vedi più sotto.
 
 Il visore grande mostra sempre la timeline; il pulsante **FX** in alto a
 destra (Ctrl/Cmd+Maiusc+F) spegne e riaccende la **correzione colore**
@@ -218,8 +220,26 @@ per esempio con un doppio clic su un pezzo).
    **Ritaglio dinamico** (Y, pulsante nella barra della timeline): con la
    modalità accesa, trascina una clip e il suo contenuto scorre: posizione
    e durata restano, cambiano inizio e fine nella clip originale.
-9. **Esporta** (Ctrl/Cmd+E): MP4 H.264 o MOV ProRes 422, sempre dai file
-   originali.
+9. **Esportazione** (Ctrl/Cmd+E): la quarta scheda, vedi sotto.
+
+### Scheda ESPORTAZIONE
+
+- **Modello**: Come il progetto, Full HD, 4K, HD 720p, Master ProRes; YouTube
+  (1080p, 4K, Shorts); Instagram (Reel/Storia 9:16, post 4:5, post 1:1);
+  TikTok, Facebook, WhatsApp. Ogni modello imposta formato, dimensione e
+  qualità; puoi cambiare tutto a mano (diventa «Personalizzato»).
+- **Cosa esportare**: tutto il progetto · il tratto tra I e O · i pezzi
+  selezionati in timeline · un tratto a scelta (da/a in secondi, con «=
+  testina») · i capitoli: un file per ogni capitolo, tra un segnaposto e il
+  successivo, con le spunte per scegliere quali.
+- **Formato**: MP4 H.264 o MOV ProRes 422; dimensione; fotogrammi al secondo
+  (come il progetto, 24, 25, 30, 50, 60); qualità. Se la proporzione è diversa
+  da quella del progetto (per esempio verticale) puoi lasciare le bande nere
+  oppure riempire il fotogramma tagliando i lati.
+- **File**: cartella e nome; il nome del modello si aggiunge da solo
+  (`Neve_YouTube-1080p.mp4`, `Neve_02_Discesa.mp4` per i capitoli).
+- L'esportazione parte da una copia del progetto: puoi continuare a montare.
+  Usa sempre i file originali (mai i proxy).
 
 ### Segnaposti
 

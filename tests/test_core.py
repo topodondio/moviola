@@ -573,6 +573,46 @@ def test_reverse(tmp):
     print("riproduzione inversa ok")
 
 
+def test_export_options(tmp):
+    """Modelli, capitoli, formato verticale che riempie il fotogramma e fps diversi."""
+    ff = paths.ffmpeg_exe()
+    assert export.preset_size(export.PRESET_BY_KEY["fullhd"], (1280, 720)) == (1920, 1080)
+    assert export.preset_size(export.PRESET_BY_KEY["igreel"], (1920, 1080)) == (1080, 1920)
+    assert export.preset_size(export.PRESET_BY_KEY["progetto"], (640, 360)) == (640, 360)
+    pr = P.Project(); pr.add_source("/x/a.mp4", info(6)); pr.add_subclip("clip1", 0, 6)
+    pr.append_to_timeline(["clip1.1"])
+    assert export.chapters(pr) == [("Inizio", 0.0, 6.0)]
+    pr.add_marker(2.0, "Uno"); pr.add_marker(4.0, "")
+    ch = export.chapters(pr)
+    assert [(c[0], round(c[1], 2), round(c[2], 2)) for c in ch] == [("Inizio", 0.0, 2.0), ("Uno", 2.0, 4.0),
+                                                                    ("Capitolo 3", 4.0, 6.0)], ch
+    assert export.safe_name('a/b:c?') == "a_b_c_"
+    clip = os.path.join(tmp, "half.mp4")             # metà sinistra bianca, metà destra nera
+    subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i",
+                    "color=c=black:s=640x360:r=25:d=2,drawbox=x=0:y=0:w=320:h=360:color=white:t=fill",
+                    "-pix_fmt", "yuv420p", clip], check=True)
+    pr = P.Project(); store = audio.AudioStore()
+    s_ = pr.add_source(clip, info(2)); pr.add_subclip(s_["id"], 0, 2); pr.append_to_timeline(["clip1.1"])
+
+    def frame(out, w, h, at=0.5):
+        fr = subprocess.run([ff, "-v", "error", "-ss", str(at), "-i", out, "-frames:v", "1", "-f", "rawvideo",
+                             "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        return np.frombuffer(fr, np.uint8).reshape(h, w, 3)
+    for fill in (False, True):
+        out = os.path.join(tmp, f"v{int(fill)}.mp4")
+        cmd, wd, dur = export.build_job(pr, store, out, size=(360, 640), fps=30, fill=fill, start=0.0, end=1.0)
+        err = export.run_job(cmd, wd, dur); assert err is None, err
+        img = frame(out, 360, 640)
+        top = img[:100].mean()                          # fascia in alto del formato verticale
+        if fill:
+            assert top > 60, top                        # l'immagine riempie: in alto c'è la metà bianca
+        else:
+            assert top < 10, top                        # bande nere sopra e sotto
+        r = subprocess.run([ff, "-i", out], capture_output=True, text=True).stderr
+        assert "30 fps" in r and "Duration: 00:00:01" in r, r
+    print("opzioni di esportazione ok")
+
+
 def test_orient(tmp):
     """Specchio e rotazione (fissa e animata): anteprima ed esportazione concordano."""
     from moviola import orient
@@ -665,6 +705,7 @@ def main():
     with tempfile.TemporaryDirectory() as t:
         test_bins(t)
         test_audio_clean(t)
+        test_export_options(t)
         test_orient(t)
         test_reverse(t)
         test_speed_keep_length()

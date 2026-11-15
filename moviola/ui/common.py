@@ -2,7 +2,7 @@
 from .bin_panel import TAGS
 
 TAB_CLIP, TAB_EFFECTS, TAB_COLOR = 0, 1, 2
-PAGE_PROJECTS, PAGE_CLIP, PAGE_MONTAGE = 0, 1, 2
+PAGE_PROJECTS, PAGE_CLIP, PAGE_MONTAGE, PAGE_EXPORT = 0, 1, 2, 3
 
 TAB_QSS = ("QTabWidget::pane { border: none; }"
            "QTabBar::tab { padding: 8px 6px; font-weight: 700; letter-spacing: 1px; color: #8d8d8d;"
