@@ -179,7 +179,7 @@ class InspectMixin:
 
     def trim_preview(self, iid, edge):
         """Allungando o accorciando un pezzo: nello schermo sorgente il fotogramma
-        del bordo che si sta trascinando; nel visore della timeline, quello nel montaggio."""
+        del bordo che si sta trascinando. La testina non si muove."""
         pr = self.project
         it = pr.item(iid)
         if it is None:
@@ -192,7 +192,7 @@ class InspectMixin:
                         and (pr.source(g.get("source", "")) or {}).get("has_video")), None)
         if vit is None:
             return
-        self.engine.seek(vit["start"] if edge == "left" else pr.item_end(vit) - pr.frame())
+        # la testina (linea rossa) resta dov'è: serve da riferimento e da aggancio
         self._edge_preview(vit, edge, "Inizio del pezzo" if edge == "left" else "Fine del pezzo")
 
     def _edge_preview(self, it, edge, text):
