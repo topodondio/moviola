@@ -253,6 +253,7 @@ class TimelineView(QWidget):
         # righello
         p.fillRect(QRectF(0, 0, self.width(), RULER), QColor(22, 23, 25))
         self._paint_ruler(p, fps)
+        self._paint_range(p)
         self._paint_markers(p)
         p.fillRect(QRectF(0, 0, HEAD, RULER), QColor(22, 23, 25))
         p.setFont(small)
@@ -307,6 +308,35 @@ class TimelineView(QWidget):
                     if HEAD <= xs <= self.width():
                         p.drawLine(QPointF(xs, RULER - 4), QPointF(xs, RULER))
             t += step
+
+    # ------------------------------------------------------- segni I/O
+    def _paint_range(self, p):
+        a, b = self.project.tl_range
+        if a is None and b is None:
+            return
+        col = QColor("#e8a33d")
+        xa = self.x_of(a) if a is not None else None
+        xb = self.x_of(b) if b is not None else None
+        lo = max(HEAD, xa if xa is not None else HEAD)
+        hi = min(self.width(), xb if xb is not None else self.width())
+        if hi > lo and (a is not None and b is not None):
+            p.fillRect(QRectF(lo, 0, hi - lo, RULER), QColor(col.red(), col.green(), col.blue(), 55))
+            p.fillRect(QRectF(lo, RULER, hi - lo, self.height() - RULER), QColor(col.red(), col.green(), col.blue(), 14))
+        f = QFont(p.font())
+        f.setPointSizeF(8)
+        f.setBold(True)
+        p.setFont(f)
+        for x, lab, left in ((xa, "I", True), (xb, "O", False)):
+            if x is None or x < HEAD - 2 or x > self.width() + 2:
+                continue
+            p.setPen(QPen(col, 2))
+            p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+            p.setPen(Qt.NoPen)
+            p.setBrush(col)
+            tab = QRectF(x if left else x - 12, 0, 12, 12)
+            p.drawRect(tab)
+            p.setPen(QColor(20, 20, 20))
+            p.drawText(tab, Qt.AlignCenter, lab)
 
     # ------------------------------------------------------- segnaposti
     def _paint_markers(self, p):

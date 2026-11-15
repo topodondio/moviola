@@ -21,6 +21,7 @@ from .color_panel import ColorPanel
 from .export_dialog import ExportDialog
 from . import icons
 from .inspector import Inspector
+from .marker_dialog import MarkerDialog
 from .meters import DB_MIN, LevelMeter
 from .scrub import ArrowScrubber
 from .preferences import DEFAULT_LIMIT_GB, PreferencesDialog
@@ -48,7 +49,8 @@ Home / Fine: inizio / fine<br><br>
 <b>Selezione delle parti (visore sorgente)</b><br>
 I / O: ingresso / uscita (su una parte selezionata la modificano subito)<br>
 Invio o M: crea la parte (clip1.1, clip1.2, …) · Ctrl/Cmd+D: duplica · F2: rinomina<br>
-E: accoda alla timeline · F9: inserisci alla testina della timeline<br><br>
+E: accoda alla timeline · F9: inserisci alla testina (spinge avanti il resto) · F10: sovrascrivi alla testina<br>
+Sulla timeline I / O segnano un tratto: Maiusc+X lo estrae, Alt+Maiusc+X lo rimuove, e l'export può usare solo quel tratto<br><br>
 <b>Timeline</b><br>
 C: taglia alla testina · Canc: elimina · Maiusc+Canc: elimina e chiudi lo spazio<br>
 N: aggancio magnetico on/off (Maiusc mentre trascini lo sospende) · + / −: zoom · Maiusc+Z: adatta · Alt+trascina: muovi solo video o solo audio<br>
@@ -602,7 +604,8 @@ class MainWindow(QMainWindow):
         act(m, "Duplica (parte nella lista, o pezzi in timeline)", self.duplicate_selected, "Ctrl+D")
         act(m, "Rinomina", self._rename_in_bin, "F2")
         act(m, "Accoda alla timeline", self.append_selected, "E")
-        act(m, "Inserisci alla testina", self.insert_at_playhead, "F9")
+        act(m, "Inserisci alla testina (spinge avanti il resto)", self.insert_at_playhead, "F9")
+        act(m, "Sovrascrivi alla testina", self.overwrite_at_playhead, "F10")
 
         m = mb.addMenu("Riproduzione")
         act(m, "Play / pausa", self.engine.toggle, "Space")
@@ -643,6 +646,14 @@ class MainWindow(QMainWindow):
             "transition:dissolve", list(self.timeline.view.selection)), "Ctrl+T")
         sm = m.addMenu("Segnaposti")
         act(sm, "Aggiungi segnaposto alla testina (sorgente: crea parte)", self.marker_or_part, "M")
+        act(m, "Estrai il tratto tra I e O (chiude il buco)", self.extract_range, "Shift+X")
+        act(m, "Rimuovi il tratto tra I e O (lascia il buco)", lambda: self.extract_range(False), "Alt+Shift+X")
+        act(m, "Togli i segni I/O dalla timeline", lambda: (self.project.checkpoint(), self.project.clear_tl_range(),
+                                                          self._mark_dirty(), self.timeline.view.update()), "Alt+X")
+        act(sm, "Segnaposto con nome…", self.add_named_marker, "Alt+M")
+        act(sm, "Segnaposto precedente", lambda: self.jump_marker(-1), "Shift+Up")
+        act(sm, "Segnaposto successivo", lambda: self.jump_marker(1), "Shift+Down")
+        act(sm, "Elenco dei segnaposti…", self.show_markers, "Alt+L")
         act(sm, "Segnaposto sul pezzo selezionato", lambda: self.timeline_action(
             "item_marker", list(self.timeline.view.selection)), "Shift+M")
         act(sm, "Elimina tutti i segnaposti", lambda: self.timeline_action("delete_all_markers", []))
@@ -921,6 +932,7 @@ class MainWindow(QMainWindow):
             if os.path.exists(raw):
                 self.store.register(src["id"], raw)
             self.start_source_jobs(src)
+        self._prepare_clean([i for i in self.project.items if i["kind"] == "audio"])
         self.timeline.view.update()
 
     def _cache_notice(self):
@@ -992,6 +1004,7 @@ class MainWindow(QMainWindow):
         self._update_title()
         self._apply_aspect()
         self.engine.refresh()
+        self._refresh_marker_dialog()
 
     def _update_title(self):
         self._update_settings_label()
@@ -1002,6 +1015,7 @@ class MainWindow(QMainWindow):
     def _mark_dirty(self):
         self.project.dirty = True
         self._update_title()
+        self._refresh_marker_dialog()
 
     def _apply_aspect(self):
         src = self.project.source(self.engine.source_id or "")
@@ -1146,7 +1160,16 @@ class MainWindow(QMainWindow):
 
     def _mark(self, which):
         if self.engine.mode != "source":
-            self.statusBar().showMessage("I segni I/O si usano sul visore sorgente: seleziona una clip.", 4000)
+            # sulla timeline I/O segnano un tratto: lo si estrae, rimuove o esporta da solo
+            self.project.checkpoint()
+            self.project.set_tl_mark(which, self.engine.position)
+            self._mark_dirty()
+            self.timeline.view.update()
+            a, b = self.project.tl_range
+            fps = self.project.fps
+            self.statusBar().showMessage(
+                "Tratto: " + (tc(a, fps) if a is not None else "—") + " → " + (tc(b, fps) if b is not None else "—")
+                + "  ·  Maiusc+X estrae, Alt+Maiusc+X rimuove, Alt+X toglie i segni", 6000)
             return
         t = self.engine.position
         sub = self.project.subclip(self.selected_ref or "")
@@ -1168,6 +1191,9 @@ class MainWindow(QMainWindow):
 
     def goto_mark(self, which):
         if self.engine.mode != "source":
+            t = self.project.tl_range[which]
+            if t is not None:
+                self.engine.seek(t)
             return
         sub = self.project.subclip(self.selected_ref or "")
         if sub:
@@ -1219,13 +1245,47 @@ class MainWindow(QMainWindow):
         self._after_timeline_edit()
         self.statusBar().showMessage(f"Accodate alla timeline: {', '.join(ids)}", 3000)
 
+    def _playhead_t(self):
+        return self.engine.source_positions.get("__timeline__", 0.0) if self.engine.mode == "source" \
+            else self.engine.position
+
     def insert_at_playhead(self):
+        """F9: inserisce le clip alla testina spingendo avanti tutto il resto."""
         ids = self._bin_refs()
         if not ids:
             return
-        t = self.engine.source_positions.get("__timeline__", 0.0) if self.engine.mode == "source" \
-            else self.engine.position
+        pr = self.project
+        total = 0.0
+        for rid in ids:
+            src, a, b = pr.range_of(rid)
+            if src is not None:
+                total += b - a
+        t = self._playhead_t()
+        pr.checkpoint()
+        pr.insert_gap(t, total)
+        pr.drop_checkpoint()  # add_refs_at ne fa uno suo: l'inserimento è un'azione sola
         self.add_refs_at(ids, t, 0, None)
+
+    def overwrite_at_playhead(self):
+        """F10: mette le clip alla testina sopra a ciò che c'è (non sposta nulla)."""
+        ids = self._bin_refs()
+        if ids:
+            self.add_refs_at(ids, self._playhead_t(), 0, None)
+
+    def extract_range(self, close_gap=True):
+        pr = self.project
+        a, b = pr.tl_range
+        if a is None or b is None:
+            self.statusBar().showMessage("Metti i segni I (ingresso) e O (uscita) sulla timeline.", 4000)
+            return
+        pr.checkpoint()
+        if not pr.range_remove(a, b, close_gap):
+            pr.drop_checkpoint()
+            self.statusBar().showMessage("Nel tratto non c'è niente da togliere.", 3000)
+            return
+        pr.clear_tl_range()
+        self.engine.seek(min(a, pr.timeline_end()))
+        self._after_timeline_edit()
 
     def add_refs_at(self, ids, t, vtrack, atrack, audio_row=False):
         """atrack None = automatico (musica sull'ultima traccia audio, il resto su A1).
@@ -1370,6 +1430,9 @@ class MainWindow(QMainWindow):
         if action == "insert_playhead":
             self.bin.select(ids)
             return self.insert_at_playhead()
+        if action == "overwrite_playhead":
+            self.bin.select(ids)
+            return self.overwrite_at_playhead()
         if not ids:
             return
         if action.startswith("tag:"):
@@ -1814,6 +1877,8 @@ class MainWindow(QMainWindow):
                     targets += [g for g in pr.linked(it) if g["kind"] == "audio"]
             for it in targets:
                 it[key] = value
+            if kind == "audio" and key in ("hp_hz", "denoise", "normalize"):
+                self._audio_clean_changed(its, key)
             if key.startswith("stab"):
                 self._ensure_stab(its)
                 self._update_stab_info()
@@ -1824,6 +1889,45 @@ class MainWindow(QMainWindow):
             self._update_name_label()
             self.refresh_inspector()
         self.engine.refresh()
+
+    # ------------------------------------------------------ pulizia audio
+    def _audio_clean_changed(self, items, key):
+        """Dopo un cambio di pulizia: prepara l'audio ripulito in sottofondo e
+        (ri)misura il volume dei pezzi normalizzati."""
+        self._prepare_clean(items)
+        self._audio_measure(items)
+
+    def _prepare_clean(self, items):
+        todo = [dict(i) for i in items if self.store.clean_key(i) and not self.store.ready(self.store.clean_key(i))]
+        if todo:
+            def job(todo=todo):
+                for it in todo:
+                    try:
+                        self.store.ensure_clean(it)
+                    except Exception:
+                        pass
+                self.media_event.emit("audio_clean", "", "")
+            self.statusBar().showMessage("Preparo l'audio ripulito…", 4000)
+            self.jobs.submit(job)
+
+    def _audio_measure(self, items, only_enabled=True):
+        n = 0
+        for it in items:
+            if only_enabled and not it.get("normalize"):
+                continue
+            g = audio.normalize_gain(self.store, it)
+            if g is not None:
+                it["norm_db"] = g
+                n += 1
+        if n:
+            self.refresh_inspector()
+        return n
+
+    def _on_audio_clean(self):
+        """L'audio ripulito è pronto: il volume si misura su quello."""
+        self.statusBar().showMessage("Audio ripulito pronto.", 3000)
+        self._audio_measure([i for i in self.project.items if i["kind"] == "audio"])
+        self._mark_dirty()
 
     # ------------------------------------------------------ stabilizzazione
     def _ensure_stab(self, items=None):
@@ -1887,6 +1991,18 @@ class MainWindow(QMainWindow):
     def _inspector_action(self, act):
         if act == "refresh_inspector":
             return self.refresh_inspector()
+        if act == "audio_norm":
+            its = self._sel_items("audio")
+            self.project.checkpoint()
+            if self._audio_measure(its, only_enabled=False):
+                for it in its:
+                    it["normalize"] = True
+                self._mark_dirty()
+                self.refresh_inspector()
+            else:
+                self.project.drop_checkpoint()
+                self.statusBar().showMessage("Non riesco a misurare questa clip (audio non pronto?).", 4000)
+            return
         if act == "add_text":
             return self.add_text()
         if act == "add_box":
@@ -2068,6 +2184,52 @@ class MainWindow(QMainWindow):
         self.timeline.view.update()
         self._mark_dirty()
         self.statusBar().showMessage(f"Segnaposto a {tc(m['t'], self.project.fps)}", 1500)
+
+    def add_named_marker(self):
+        t = self.engine.position if self.engine.mode == "timeline" else \
+            self.engine.source_positions.get("__timeline__", 0.0)
+        text, ok = QInputDialog.getText(self, "Segnaposto", "Nome del segnaposto:")
+        if not ok:
+            return
+        self.project.checkpoint()
+        m = self.project.add_marker(t)
+        m["label"] = text.strip()
+        self.timeline.view.update()
+        self._mark_dirty()
+        self._refresh_marker_dialog()
+
+    def jump_marker(self, direction):
+        t = self.engine.position
+        fr = self.engine.frame_step() / 2
+        pts = [m["t"] for m in self.project.markers]
+        cand = [p for p in pts if p > t + fr] if direction > 0 else [p for p in pts if p < t - fr]
+        if not cand:
+            self.statusBar().showMessage("Nessun altro segnaposto.", 2000)
+            return
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")
+        self.engine.seek(cand[0] if direction > 0 else cand[-1])
+
+    def show_markers(self):
+        if getattr(self, "marker_dialog", None) is None:
+            d = self.marker_dialog = MarkerDialog(self.project, self)
+            d.setWindowFlag(Qt.Tool, True)
+            d.goto.connect(self._marker_goto)
+            d.checkpoint.connect(lambda: self.project.checkpoint())
+            d.changed.connect(lambda: (self.timeline.view.update(), self._mark_dirty()))
+        self.marker_dialog.refresh(self.project)
+        self.marker_dialog.show()
+        self.marker_dialog.raise_()
+
+    def _marker_goto(self, t):
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")
+        self.engine.seek(t)
+
+    def _refresh_marker_dialog(self):
+        d = getattr(self, "marker_dialog", None)
+        if d is not None and d.isVisible():
+            d.refresh(self.project)
 
     def freeze_at_playhead(self, ids=None, dur=None):
         pr = self.project
@@ -2430,6 +2592,8 @@ class MainWindow(QMainWindow):
 
     def _on_media_event(self, kind, key, payload):
         pr = self.project
+        if kind == "audio_clean":
+            return self._on_audio_clean()
         if kind == "probed":
             self._import_results[key] = payload
             if not all(f in self._import_results for f in self._pending_imports):
@@ -2470,6 +2634,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(msg, 5000)
         elif kind == "audio_ready":
             self.store.register(key, payload)
+            self._prepare_clean([i for i in pr.items if i["kind"] == "audio" and i["source"] == key])
             self._set_status(key)
             self._schedule_cache_check()
         elif kind == "peaks":
@@ -2675,6 +2840,7 @@ class MainWindow(QMainWindow):
             if os.path.exists(raw):
                 self.store.register(src["id"], raw)
             self.start_source_jobs(src)
+        self._prepare_clean([i for i in pr.items if i["kind"] == "audio"])
         self.act_proxy.setChecked(pr.data.get("use_proxies", True))
         if path:
             self._remember_recent(path)
@@ -2716,7 +2882,7 @@ class MainWindow(QMainWindow):
         return True
 
     # ------------------------------------------- autosalvataggio e copie
-    AUTOSAVE_SECONDS = 120
+    AUTOSAVE_SECONDS = 60
     BACKUPS_KEPT = 10
 
     def _autosave_path(self):

@@ -40,7 +40,9 @@ MARKER_COLORS = ["#e8a33d", "#e05050", "#4cbf4a", "#3d8fe0", "#c060d0", "#e0e0e0
 VIDEO_DEFAULTS = {"speed": 1.0, "bars": 0.0, "zoom": 1.0, "pos_x": 0.0, "pos_y": 0.0, "fade_in": 0.0, "fade_out": 0.0,
                   "fade_in_color": "black", "fade_out_color": "black",
                   "stab": False, "stab_strength": 0.5, "stab_crop": 0.10}
-AUDIO_DEFAULTS = {"speed": 1.0, "gain_db": 0.0, "fade_in": 0.0, "fade_out": 0.0}
+AUDIO_DEFAULTS = {"speed": 1.0, "gain_db": 0.0, "fade_in": 0.0, "fade_out": 0.0,
+                  # pulizia: taglia-bassi (vento), riduzione rumore, normalizzazione del volume
+                  "hp_hz": 0, "denoise": 0.0, "normalize": False, "norm_db": 0.0}
 TEXT_DEFAULTS = {"opacity": 1.0, "text": "Titolo", "font": "", "size": 8.0, "color": "#ffffff", "bold": True,
                  "italic": False,
                  "align": "center", "pos_x": 0.5, "pos_y": 0.5, "shadow": True, "box": False,
@@ -839,6 +841,51 @@ class Project:
                 for m in self.markers:
                     if m["t"] >= b - 1e-6:
                         m["t"] = self.snap(m["t"] - (b - a))
+
+    # ------------------------------------------- segni I/O della timeline
+    @property
+    def tl_range(self):
+        r = self.data.get("range") or {}
+        return r.get("in"), r.get("out")
+
+    def set_tl_mark(self, which, t):
+        r = self.data.setdefault("range", {"in": None, "out": None})
+        t = self.snap(max(0.0, t))
+        r["in" if which == 0 else "out"] = t
+        a, b = r.get("in"), r.get("out")
+        if a is not None and b is not None and b <= a:  # l'altro segno finirebbe dall'altra parte
+            r["out" if which == 0 else "in"] = None
+
+    def clear_tl_range(self):
+        self.data.pop("range", None)
+
+    def range_remove(self, a, b, close_gap=True):
+        """Toglie dalla timeline il tratto [a, b) su tutte le tracce. close_gap=True
+        (Estrai): il resto scorre indietro e chiude il buco; False (Rimuovi): il buco resta."""
+        a, b = self.snap(a), self.snap(b)
+        if b - a < self.frame() - 1e-9:
+            return False
+        self.split_at(a)
+        self.split_at(b)
+        eps = 1e-6
+        gone = [i["id"] for i in self.items if i["start"] >= a - eps and self.item_end(i) <= b + eps]
+        if not gone:
+            return False
+        self.delete_items(gone, ripple=close_gap)
+        self.markers[:] = [m for m in self.markers if not (a - eps <= m["t"] < b - eps)] if close_gap else self.markers
+        return True
+
+    def insert_gap(self, t, dur):
+        """Apre uno spazio di dur secondi a t su tutte le tracce (inserimento che spinge
+        avanti il resto: i pezzi che attraversano t vengono divisi)."""
+        t = self.snap(t)
+        self.split_at(t)
+        for i in self.items:
+            if i["start"] >= t - 1e-6:
+                i["start"] = self.snap(i["start"] + dur)
+        for m in self.markers:
+            if m["t"] >= t - 1e-6:
+                m["t"] = self.snap(m["t"] + dur)
 
     def unlink(self, ids):
         for iid in ids:

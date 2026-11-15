@@ -97,7 +97,8 @@ _FALLBACK = {("video", "stab"): False, ("video", "stab_strength"): 0.5, ("video"
              ("text", "outline"): False, ("text", "outline_w"): 0.06, ("text", "glow"): False,
              ("text", "glow_amt"): 0.6, ("text", "spacing"): 0.0, ("text", "caps"): False,
              ("text", "anim_in"): "none", ("text", "anim_in_dur"): 0.6,
-             ("text", "anim_out"): "none", ("text", "anim_out_dur"): 0.6}
+             ("text", "anim_out"): "none", ("text", "anim_out_dur"): 0.6,
+             ("audio", "hp_hz"): 0, ("audio", "denoise"): 0.0, ("audio", "normalize"): False}
 
 # stili pronti per le scritte: un clic e cambiano contorno, ombra, riquadro, lettere…
 TEXT_STYLES = [
@@ -114,6 +115,12 @@ TEXT_STYLES = [
               "glow_color": "#e8a33d", "glow_amt": 0.9, "color": "#fff3d6", "box": False}),
     ("Titolo", {"bold": True, "caps": True, "spacing": 6.0, "shadow": True, "outline": False, "glow": False,
                 "box": False, "size": 12.0}),
+]
+
+AUDIO_PRESETS = [
+    ("Vento", {"hp_hz": 150, "denoise": 0.3}),
+    ("Voce", {"hp_hz": 90, "denoise": 0.5, "normalize": True}),
+    ("Nessuna", {"hp_hz": 0, "denoise": 0.0, "normalize": False}),
 ]
 
 ANIM_IN = [("Nessuna", "none"), ("Sale dal basso", "up"), ("Scende dall'alto", "down"),
@@ -435,6 +442,29 @@ class Inspector(QWidget):
         b.clicked.connect(lambda: self.action.emit("clear_gain"))
         f.addRow(b)
         lay.addWidget(gb)
+        gb, f = _group("Pulizia")
+        f.addRow("Taglia i bassi (vento)", self._slider("audio", "hp_hz", 0, 400, 10, 0, " Hz", 0))
+        f.addRow("Riduci il rumore", self._slider("audio", "denoise", 0, 100, 1, 0, " %", 0, scale=100))
+        f.addRow(self._check("audio", "normalize", "Normalizza il volume"))
+        self.norm_label = QLabel("")
+        self.norm_label.setStyleSheet("color:#9a9a9a; font-size:11px;")
+        f.addRow(self.norm_label)
+        grid = QGridLayout()
+        for n, (lab, props) in enumerate(AUDIO_PRESETS):
+            b = QPushButton(lab)
+            b.clicked.connect(lambda _=False, pp=props: self._apply_audio_preset(pp))
+            grid.addWidget(b, 0, n)
+        f.addRow(grid)
+        b = QPushButton("Ricalcola il volume")
+        b.setToolTip("Misura di nuovo la clip (dopo aver rifilato o cambiato la pulizia)")
+        b.clicked.connect(lambda: self.action.emit("audio_norm"))
+        f.addRow(b)
+        hint = QLabel("La pulizia non cambia il file originale. La riduzione del rumore ha bisogno di qualche "
+                      "secondo: finché non è pronta senti l'audio com'era.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#808080; font-size:11px;")
+        f.addRow(hint)
+        lay.addWidget(gb)
         gb, f = _group("Dissolvenze audio")
         f.addRow("Entrata", self._spin("audio", "fade_in", 0, 10, 0.1))
         f.addRow("Uscita", self._spin("audio", "fade_out", 0, 10, 0.1))
@@ -548,6 +578,12 @@ class Inspector(QWidget):
         if not self._loading:
             self.begin.emit(key)
 
+    def _apply_audio_preset(self, props):
+        self._begin("audio_preset")
+        for k, v in props.items():
+            self._emit("audio", k, v)
+        self.action.emit("refresh_inspector")
+
     def _apply_text_style(self, props):
         """Stile pronto: un solo passo di annulla per tutte le proprietà."""
         self._begin("text_style")
@@ -655,6 +691,9 @@ class Inspector(QWidget):
                         w.setCurrentIndex(i)
                 elif isinstance(w, QCheckBox):
                     w.setChecked(bool(val))
+            if kind == "audio":
+                nd = float(item.get("norm_db", 0.0) or 0.0)
+                self.norm_label.setText(f"Volume applicato: {nd:+.1f} dB" if item.get("normalize") else "")
             if kind == "video":
                 tr = item.get("trans") or {}
                 i = self.tr_type.findData(tr.get("type")) if tr else 0

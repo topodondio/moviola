@@ -292,6 +292,7 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
     graph = ";\n".join(chains + [final])
 
     wav = os.path.join(workdir, "mix.wav")
+    store.ensure_all_clean(project)  # audio ripulito pronto prima del mix
     audio.write_wav(wav, project, store, start, end)
     a_idx = n_inputs
     inputs += ["-i", wav]

@@ -695,6 +695,7 @@ class BinPanel(QWidget):
         if ids:
             m.addAction("Accoda alla timeline\tE", lambda: self.request.emit("append", ids))
             m.addAction("Inserisci alla testina\tF9", lambda: self.request.emit("insert_playhead", ids))
+            m.addAction("Sovrascrivi alla testina\tF10", lambda: self.request.emit("overwrite_playhead", ids))
             m.addSeparator()
             self._bin_menu(m, ids, tree.bin_at(it) if it is not None else None)
             m.addSeparator()

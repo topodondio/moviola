@@ -7,7 +7,7 @@ import sys
 import threading
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                                QMessageBox, QProgressBar, QPushButton, QVBoxLayout)
 
 from .. import export
@@ -56,6 +56,12 @@ class ExportDialog(QDialog):
         dur = project.timeline_end()
         m, s = divmod(dur, 60)
         form.addRow("Durata", QLabel(f"{int(m)}:{s:04.1f} · {project.fps:g} fps"))
+        a, b = project.tl_range
+        self.only_range = None
+        if a is not None and b is not None and b > a:
+            self.only_range = QCheckBox(f"Solo il tratto tra I e O ({b - a:.1f} s)")
+            self.only_range.setChecked(True)
+            form.addRow("Tratto", self.only_range)
         lay.addLayout(form)
         note = QLabel("L'export usa sempre i file originali (mai i proxy), indipendentemente dalla "
                       "risoluzione scelta per l'anteprima, e applica il colore di clip intera, pezzo e timeline.")
@@ -112,11 +118,15 @@ class ExportDialog(QDialog):
         fmt = self.fmt.currentData()
         q = self.quality.currentData()
         size = self.res.currentData()
+        rng = (0.0, None)
+        if self.only_range is not None and self.only_range.isChecked():
+            rng = self.project.tl_range
 
         def work():
             try:
                 cmd, wd, dur = export.build_job(self.project, self.store, out, fmt, q,
-                                                text_renderer=self.text_renderer, size=size)
+                                                text_renderer=self.text_renderer, size=size,
+                                                start=rng[0], end=rng[1])
                 err = export.run_job(cmd, wd, dur, progress=self.progress.emit, cancel=self._cancel)
             except Exception as e:
                 err = str(e)

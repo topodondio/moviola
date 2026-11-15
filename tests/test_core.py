@@ -437,6 +437,70 @@ def test_duplicate():
     print("duplica ok")
 
 
+def test_range_edit():
+    pr = P.Project()
+    pr.add_source("/x/a.mp4", info(20))
+    pr.add_subclip("clip1", 0, 4); pr.add_subclip("clip1", 4, 6)
+    pr.append_to_timeline(["clip1.1"]); pr.append_to_timeline(["clip1.2"])      # 0-4 e 4-6
+    m = pr.add_marker(5.0, "dopo"); m0 = pr.add_marker(1.0, "prima")
+    pr.set_tl_mark(0, 1.0); pr.set_tl_mark(1, 3.0)
+    assert pr.tl_range == (1.0, 3.0)
+    pr.set_tl_mark(0, 3.5); assert pr.tl_range[1] is None and abs(pr.tl_range[0] - 3.5) < 0.05               # I oltre O: O si annulla
+    pr.set_tl_mark(0, 1.0); pr.set_tl_mark(1, 3.0)
+    # Estrai: il tratto sparisce e il resto scorre indietro
+    pr.range_remove(1.0, 3.0, True)
+    assert abs(pr.timeline_end() - 4.0) < 1e-6, pr.timeline_end()
+    assert abs(m["t"] - 3.0) < 1e-6 and pr.marker(m0["id"]) is not None or abs(m0["t"] - 1.0) < 1e-6
+    for k in ("video", "audio"):
+        its = pr.items_on(k, 0)
+        assert all(abs(pr.item_end(x) - y["start"]) < 1e-6 for x, y in zip(its, its[1:])), "buco rimasto"
+        assert sum(pr.item_dur(i) for i in its) > 3.9
+    # Rimuovi: il buco resta
+    pr2 = P.Project(); pr2.add_source("/x/a.mp4", info(20)); pr2.add_subclip("clip1", 0, 6)
+    pr2.append_to_timeline(["clip1.1"])
+    pr2.range_remove(2.0, 3.0, False)
+    v = pr2.items_on("video", 0); assert len(v) == 2 and abs(v[1]["start"] - 3.0) < 1e-6 and abs(pr2.timeline_end() - 6.0) < 1e-6
+    # Inserisci: tutto ciò che segue la testina scorre avanti
+    pr3 = P.Project(); pr3.add_source("/x/a.mp4", info(20)); pr3.add_subclip("clip1", 0, 6); pr3.add_subclip("clip1", 8, 10)
+    pr3.append_to_timeline(["clip1.1"])
+    pr3.insert_gap(2.0, 2.0); pr3.add_to_timeline("clip1.2", 2.0, 0, 0)
+    v = pr3.items_on("video", 0)
+    assert [round(x["start"], 3) for x in v] == [0.0, 2.0, 4.0], [x["start"] for x in v]
+    assert abs(pr3.timeline_end() - 8.0) < 1e-6
+    print("segni I/O, estrai e inserisci ok")
+
+
+def test_audio_clean(tmp):
+    """Pulizia audio: taglia-bassi, riduzione rumore e normalizzazione, in anteprima e in export."""
+    rate = audio.RATE
+    t = np.arange(int(rate * 4)) / rate
+    voice = 0.12 * np.sin(2 * np.pi * 440 * t)            # «voce» a 440 Hz
+    wind = 0.25 * np.sin(2 * np.pi * 40 * t)              # rombo a 40 Hz
+    x = np.stack([voice + wind, voice + wind], 1)
+    raw = os.path.join(tmp, "a.s16")
+    (np.clip(x, -1, 1) * 32767).astype("<i2").tofile(raw)
+    store = audio.AudioStore(); store.register("clip1", raw)
+    pr = P.Project(); pr.add_source("/x/a.mp4", info(4)); pr.add_subclip("clip1", 0, 4)
+    its = pr.append_to_timeline(["clip1.1"]); a = [i for i in its if i["kind"] == "audio"][0]
+    def level(freq_chunk):
+        m = audio.mix_timeline(pr, store, 0.5, rate)[:, 0]
+        sp = np.abs(np.fft.rfft(m)); fr = np.fft.rfftfreq(len(m), 1 / rate)
+        return sp[(fr > freq_chunk - 5) & (fr < freq_chunk + 5)].max() / len(m) * 2
+    w0, v0 = level(40), level(440)
+    a["hp_hz"] = 150
+    assert store.clean_key(a) and store.ensure_clean(a), "pulizia non riuscita"
+    w1, v1 = level(40), level(440)
+    assert w1 < w0 * 0.1 and v1 > v0 * 0.9, (w0, w1, v0, v1)       # il rombo cala, la voce resta
+    g = audio.normalize_gain(store, a)
+    assert g is not None and g > 0, g
+    a["normalize"] = True; a["norm_db"] = g
+    v2 = level(440)
+    assert abs(20 * np.log10(v2 / v1) - g) < 0.5, (v1, v2, g)
+    a["hp_hz"] = 0; a["denoise"] = 0.5
+    assert store.ensure_clean(a)
+    print("pulizia audio ok")
+
+
 def test_update(tmp):
     import io, zipfile
     from moviola import update as U
@@ -481,9 +545,10 @@ def test_update(tmp):
 
 
 def main():
-    test_model(); test_color(); test_ripple(); test_duplicate()
+    test_model(); test_color(); test_ripple(); test_duplicate(); test_range_edit()
     with tempfile.TemporaryDirectory() as t:
         test_bins(t)
+        test_audio_clean(t)
         test_update(t)
     with tempfile.TemporaryDirectory() as t:
         test_export(t)

@@ -4,12 +4,14 @@ segue, così restano sempre a sincrono."""
 from __future__ import annotations
 
 import os
+import subprocess
 import threading
 import time
 import wave
 
 import numpy as np
 
+from . import paths
 from . import speed as spd
 
 RATE = 48000
@@ -48,6 +50,107 @@ class AudioStore:
 
     def ready(self, source_id: str) -> bool:
         return self.get(source_id) is not None
+
+    # ---------------------------------------------------- pulizia dell'audio
+    @staticmethod
+    def clean_key(it):
+        """Chiave dell'audio ripulito di un pezzo (None se non ha pulizia)."""
+        hp = int(it.get("hp_hz") or 0)
+        dn = int(round(float(it.get("denoise") or 0.0) * 100))
+        if hp <= 0 and dn <= 0:
+            return None
+        return f"{it['source']}~hp{hp}~dn{dn}"
+
+    def for_item(self, it):
+        """Campioni da usare per il pezzo: quelli ripuliti se sono pronti, altrimenti
+        gli originali (la pulizia si prepara in sottofondo)."""
+        key = self.clean_key(it)
+        if key is not None:
+            d = self.get(key)
+            if d is not None:
+                return d
+        return self.get(it["source"])
+
+    def ensure_clean(self, it) -> bool:
+        """Prepara (se manca) l'audio ripulito del pezzo con FFmpeg: taglia-bassi contro
+        il vento e riduzione adattiva del rumore. Può durare qualche secondo."""
+        key = self.clean_key(it)
+        if key is None:
+            return False
+        if self.ready(key):
+            return True
+        raw = self._paths.get(it["source"])
+        exe = paths.ffmpeg_exe()
+        if not raw or not exe or not os.path.exists(raw):
+            return False
+        out = raw + "." + key.split("~", 1)[1] + ".s16"
+        if not (os.path.exists(out) and os.path.getsize(out) > 0):
+            hp = int(it.get("hp_hz") or 0)
+            dn = float(it.get("denoise") or 0.0)
+            chain = []
+            if hp > 0:
+                chain.append(f"highpass=f={hp}:poles=2")
+            if dn > 0:
+                chain.append(f"afftdn=nr={max(0.5, dn * 30):.1f}:nf=-40:tn=1")
+            tmp = out + ".part"
+            r = subprocess.run([exe, "-y", "-v", "error", "-f", "s16le", "-ar", str(RATE), "-ac", str(CHANNELS),
+                                "-i", raw, "-af", ",".join(chain), "-f", "s16le", "-acodec", "pcm_s16le", tmp],
+                               capture_output=True)
+            if r.returncode != 0 or not os.path.exists(tmp):
+                return False
+            os.replace(tmp, out)
+        self.register(key, out)
+        return True
+
+    def ensure_all_clean(self, project):
+        for it in project.items:
+            if it["kind"] == "audio":
+                self.ensure_clean(it)
+
+
+def measure_loudness(data, t_in: float, t_out: float, rate: int = RATE):
+    """(volume medio in dB, picco in dB) di un tratto, rispetto al fondo scala. Il medio
+    esclude i silenzi e i momenti molto più bassi del resto (come fa il loudness
+    degli standard di trasmissione, ma senza il filtro di ponderazione)."""
+    if data is None:
+        return None
+    a = max(0, int(t_in * rate))
+    b = min(data.shape[0], int(t_out * rate))
+    if b - a < rate // 10:
+        return None
+    blk = int(0.4 * rate)
+    ms, peak = [], 0.0
+    for i in range(a, b, blk):
+        x = np.asarray(data[i:min(i + blk, b)], dtype=np.float32) / 32768.0
+        if x.size == 0:
+            continue
+        peak = max(peak, float(np.abs(x).max()))
+        ms.append(float((x * x).mean()))
+    ms = np.asarray(ms)
+    ms = ms[ms > 10 ** (-50 / 10)]  # silenzio assoluto fuori
+    if ms.size == 0:
+        return None
+    rel = 10 * np.log10(ms.mean()) - 10
+    ms = ms[10 * np.log10(ms) > rel]
+    if ms.size == 0:
+        return None
+    return float(10 * np.log10(ms.mean())), float(20 * np.log10(max(peak, 1e-6)))
+
+
+NORM_TARGET_DB = -16.0
+
+
+def normalize_gain(store: AudioStore, it, target: float = NORM_TARGET_DB):
+    """Guadagno in dB che porta il pezzo al volume di riferimento, senza che il picco
+    superi -1 dB. None se non si riesce a misurare."""
+    data = store.for_item(it)
+    m = measure_loudness(data, float(it["src_in"]), float(it["src_out"]))
+    if m is None:
+        return None
+    mean_db, peak_db = m
+    g = target - mean_db
+    g = min(g, -1.0 - peak_db)
+    return float(max(-24.0, min(24.0, g)))
 
 
 def _add_segment(out, data, out_from, src_from, n, gain, fade_in=0, fade_out=0):
@@ -100,7 +203,8 @@ def _item_chunk(data, it, a, b, rate):
         chunk = block[i] * (1 - f) + block[i + 1] * f
         chunk[~valid] = 0
         src_sec = pos / rate
-    chunk = chunk.astype(np.float32) * (db_to_gain(it.get("gain_db", 0.0)) / 32768.0)
+    gdb = float(it.get("gain_db", 0.0)) + (float(it.get("norm_db", 0.0)) if it.get("normalize") else 0.0)
+    chunk = chunk.astype(np.float32) * (db_to_gain(gdb) / 32768.0)
     pts = it.get("gain_pts")
     if pts:  # volume disegnato sulla clip (punti ancorati al tempo del file)
         db = np.interp(src_sec, [p[0] for p in pts], [p[1] for p in pts])
@@ -167,7 +271,7 @@ def mix_timeline(project, store: AudioStore, t0: float, nframes: int, rate: int 
         e = s + spd.item_dur(it)
         if e <= t0 or s >= t1:
             continue
-        data = store.get(it["source"])
+        data = store.for_item(it)
         if data is None:
             continue
         a = max(s, t0)
