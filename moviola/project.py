@@ -39,7 +39,8 @@ MARKER_COLORS = ["#e8a33d", "#e05050", "#4cbf4a", "#3d8fe0", "#c060d0", "#e0e0e0
 
 VIDEO_DEFAULTS = {"speed": 1.0, "bars": 0.0, "zoom": 1.0, "pos_x": 0.0, "pos_y": 0.0, "fade_in": 0.0, "fade_out": 0.0,
                   "fade_in_color": "black", "fade_out_color": "black",
-                  "stab": False, "stab_strength": 0.5, "stab_crop": 0.10}
+                  "stab": False, "stab_strength": 0.5, "stab_crop": 0.10,
+                  "flip_h": False, "flip_v": False, "rotate": 0.0}
 AUDIO_DEFAULTS = {"speed": 1.0, "gain_db": 0.0, "fade_in": 0.0, "fade_out": 0.0,
                   # pulizia: taglia-bassi (vento), riduzione rumore, normalizzazione del volume
                   "hp_hz": 0, "denoise": 0.0, "normalize": False, "norm_db": 0.0}

@@ -15,7 +15,7 @@ from .text_render import default_family
 from .timeline import tc
 
 
-from .common import PAGE_CLIP, PAGE_MONTAGE, PAGE_PROJECTS, TAB_COLOR  # noqa: F401  (ri-esportate per i test)
+from .common import PAGE_CLIP, PAGE_MONTAGE, PAGE_PROJECTS, TAB_COLOR, TAB_EFFECTS  # noqa: F401  (ri-esportate per i test)
 from .win_build import BuildMixin
 from .win_system import SystemMixin
 from .win_bin import BinMixin
@@ -117,6 +117,8 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
         ins.begin.connect(self._grade_begin)
         ins.changed.connect(self._item_edit)
         ins.action.connect(self._inspector_action)
+        ins.rot_anim.connect(self._rot_anim_edit)
+        ins.rot_seek.connect(self._rot_seek)
         ins.preview_at.connect(self._preview_item_fraction)
         self.timeline.btn_text.clicked.connect(self.add_text)
         self.timeline.btn_settings.clicked.connect(self.timeline_settings)
@@ -253,6 +255,10 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
             ctx = self._anim_context() if self.right_tabs.currentIndex() == TAB_COLOR else None
             if ctx is not None:
                 self.color_panel.set_playhead(t - ctx[0])
+            elif self.right_tabs.currentIndex() == TAB_EFFECTS:
+                v = self._video_items(list(self.timeline.view.selection))
+                if v and v[0].get("rotate_anim"):
+                    self.inspector.rot.set_playhead(t - v[0]["start"])
             self.timeline.overview.update()
             follow = self.engine.playing
             before = self.timeline.view.scroll_t

@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 
 
-from .. import stabilize, audio
+from .. import stabilize, audio, orient
 from .. import speed as spd
 from ..project import is_overlay
 from .timeline import tc
@@ -111,9 +111,57 @@ class InspectMixin:
         else:
             self.inspector.set_stab_info("In attesa dell'analisi del movimento…", busy=True)
 
+    def _rot_anim_edit(self, pts):
+        """Rotazione animata (punti [[t, gradi]]) o di nuovo fissa (pts None)."""
+        its = self._video_items(list(self.timeline.view.selection))
+        if not its:
+            return
+        for it in its:
+            rel = self._timeline_pos() - it["start"]
+            if pts:
+                import copy as _copy
+                it["rotate_anim"] = _copy.deepcopy(pts)
+            else:
+                old = it.pop("rotate_anim", None)
+                if old:  # torna fissa all'angolo che aveva alla testina
+                    from ..color import value_at
+                    it["rotate"] = value_at(old, rel)
+        self._mark_dirty()
+        self.refresh_inspector()
+        self.engine.refresh()
+        self.timeline.view.update()
+
+    def _rot_seek(self, t_rel):
+        its = self._video_items(list(self.timeline.view.selection))
+        if not its:
+            return
+        it = its[0]
+        if self.engine.mode != "timeline":
+            self.set_viewer_mode("timeline")
+        self.engine.seek(it["start"] + max(0.0, min(t_rel, self.project.item_dur(it) - self.project.frame())))
+
     def _inspector_action(self, act):
         if act == "refresh_inspector":
             return self.refresh_inspector()
+        if act in ("rot_cw", "rot_ccw", "rot_zero"):
+            its = self._video_items(list(self.timeline.view.selection))
+            if not its:
+                return
+            self.project.checkpoint()
+            for it in its:
+                d = {"rot_cw": 90.0, "rot_ccw": -90.0}.get(act)
+                if d is None:
+                    it["rotate"] = 0.0
+                    it.pop("rotate_anim", None)
+                elif it.get("rotate_anim"):
+                    it["rotate_anim"] = [[p[0], p[1] + d] for p in it["rotate_anim"]]
+                else:
+                    r = float(it.get("rotate", 0.0) or 0.0) + d
+                    it["rotate"] = r - 360.0 * round(r / 360.0)
+            self._mark_dirty()
+            self.refresh_inspector()
+            self.engine.refresh()
+            return
         if act == "audio_norm":
             its = self._sel_items("audio")
             self.project.checkpoint()
@@ -151,6 +199,8 @@ class InspectMixin:
                 src = pr.source(it["source"])
                 sw = (src or {}).get("width") or W
                 sh = (src or {}).get("height") or H
+                if orient.active(it):
+                    sw, sh = orient.canvas(sw, sh, it)
                 it["zoom"] = max(W / sw, H / sh) / min(W / sw, H / sh)
                 it["pos_x"] = it["pos_y"] = 0.0
         self._after_timeline_edit()

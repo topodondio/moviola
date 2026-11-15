@@ -321,7 +321,8 @@ class TimelineMixin:
     def refresh_inspector(self):
         it, n = self._primary_item()
         dur = self.project.item_dur(it) if it else None
-        self.inspector.show_item(it, n, dur)
+        ph = (self._timeline_pos() - it["start"]) if it else 0.0
+        self.inspector.show_item(it, n, dur, ph)
         if it is not None and it["kind"] == "video":
             prev = self.project._prev_adjacent(it)
             if prev is None:

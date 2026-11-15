@@ -245,6 +245,15 @@ per esempio con un doppio clic su un pezzo).
   avanti; **F10** la sovrascrive.
 - In esportazione, «Solo il tratto tra I e O» esporta solo quel tratto.
 
+### Specchio e rotazione
+
+Nell'ispettore, per ogni clip video: **Specchia ↔ / ↕**, rotazione in gradi
+(senso orario) con i tasti ↺ 90° / ↻ 90° / 0°. Con la spunta accanto a
+«Rotazione» l'angolo si anima nel tempo, come i cursori del colore: grafico
+con punti (clic aggiunge, trascina sposta, doppio clic toglie). L'immagine
+ruotata resta tutta visibile (angoli neri): per riempire il fotogramma usa
+Zoom. Con la rotazione animata la tela è fissa, così l'immagine non pulsa.
+
 ### Pulizia dell'audio
 
 Nell'ispettore, per ogni pezzo audio: taglia-bassi (vento, rombo),

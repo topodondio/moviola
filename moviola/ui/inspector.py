@@ -93,7 +93,7 @@ class ColorButton(QPushButton):
             self.picked.emit(c.name())
 
 
-_FALLBACK = {("video", "stab"): False, ("video", "stab_strength"): 0.5, ("video", "stab_crop"): 0.10,
+_FALLBACK = {("video", "flip_h"): False, ("video", "flip_v"): False, ("video", "stab"): False, ("video", "stab_strength"): 0.5, ("video", "stab_crop"): 0.10,
              ("text", "outline"): False, ("text", "outline_w"): 0.06, ("text", "glow"): False,
              ("text", "glow_amt"): 0.6, ("text", "spacing"): 0.0, ("text", "caps"): False,
              ("text", "anim_in"): "none", ("text", "anim_in_dur"): 0.6,
@@ -146,6 +146,8 @@ class Inspector(QWidget):
     begin = Signal(str)
     changed = Signal(str, str, object)  # tipo pezzo ('video', 'audio', 'text'), chiave, valore
     action = Signal(str)  # 'fill', 'center', 'add_text'
+    rot_anim = Signal(object)  # punti [[t, gradi]] della rotazione animata, o None = fissa
+    rot_seek = Signal(float)  # tempo relativo al pezzo da mostrare nel visore
     preview_at = Signal(float)  # frazione del pezzo da mostrare nel visore (nodi della curva)
 
     def __init__(self, parent=None):
@@ -385,6 +387,37 @@ class Inspector(QWidget):
     def set_transition_info(self, text):
         self.tr_info.setText(text)
 
+    def _orient_group(self):
+        from .color_panel import GradeSlider
+
+        gb, f = _group("Specchio e rotazione")
+        row = QHBoxLayout()
+        row.addWidget(self._check("video", "flip_h", "Specchia ↔"))
+        row.addWidget(self._check("video", "flip_v", "Specchia ↕"))
+        f.addRow(row)
+        self.rot = GradeSlider("rotate", "Rotazione", -360, 360, 0.5)
+        self.rot.lab.setFixedWidth(70)
+        self.rot.anim_chk.setToolTip("Anima la rotazione nel tempo: l'angolo cambia lungo il pezzo "
+                                     "(clic sul grafico per aggiungere punti)")
+        self.rot.pressed.connect(self._begin)
+        self.rot.changed.connect(lambda k, v: self._emit("video", "rotate", v))
+        self.rot.anim_changed.connect(lambda k, pts: None if self._loading else self.rot_anim.emit(pts))
+        self.rot.anim_seek.connect(self.rot_seek)
+        f.addRow(self.rot)
+        row = QHBoxLayout()
+        for lab, act, tip in (("↺ 90°", "rot_ccw", "Ruota di 90° in senso antiorario"),
+                              ("↻ 90°", "rot_cw", "Ruota di 90° in senso orario"),
+                              ("0°", "rot_zero", "Rotazione a zero")):
+            b = QPushButton(lab)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _=False, a=act: self.action.emit(a))
+            row.addWidget(b)
+        f.addRow(row)
+        hint = QLabel("Gradi in senso orario. Gli angoli vuoti restano neri.")
+        hint.setStyleSheet("color:#808080; font-size:11px;")
+        f.addRow(hint)
+        return gb
+
     def _video_page(self):
         w = QWidget()
         lay = QVBoxLayout(w)
@@ -408,6 +441,7 @@ class Inspector(QWidget):
         hint.setStyleSheet("color:#808080; font-size:11px;")
         f.addRow(hint)
         lay.addWidget(gb)
+        lay.addWidget(self._orient_group())
         lay.addWidget(self._stab_group())
         gb, f = _group("Dissolvenze")
         cols = [("da/verso nero", "black"), ("da/verso bianco", "white")]
@@ -652,7 +686,7 @@ class Inspector(QWidget):
             self.changed.emit(kind, key, value)
 
     # -------------------------------------------------------------- dati
-    def show_item(self, item, count=1, duration=None):
+    def show_item(self, item, count=1, duration=None, playhead=0.0):
         """Mostra le proprietà di un pezzo (None = pagina vuota)."""
         self._loading = True
         try:
@@ -695,6 +729,10 @@ class Inspector(QWidget):
                 nd = float(item.get("norm_db", 0.0) or 0.0)
                 self.norm_label.setText(f"Volume applicato: {nd:+.1f} dB" if item.get("normalize") else "")
             if kind == "video":
+                pts = item.get("rotate_anim")
+                ang = float(item.get("rotate", 0.0) or 0.0)
+                self.rot.set_value(ang)
+                self.rot.set_anim(pts, duration or 1.0, playhead)
                 tr = item.get("trans") or {}
                 i = self.tr_type.findData(tr.get("type")) if tr else 0
                 self.tr_type.setCurrentIndex(max(0, i))

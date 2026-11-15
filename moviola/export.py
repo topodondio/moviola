@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import threading
 
-from . import audio, color, paths, stabilize
+from . import audio, color, orient, paths, stabilize
 from . import speed as spd
 from .media import parse_ffmpeg_time
 
@@ -136,7 +136,11 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
         span = 1.0 if freeze else max(0.2, min(src_end, sdur) - src_t + 0.5)
         inputs.extend(["-ss", f"{src_t:.6f}", "-t", f"{span:.6f}", "-i", src["path"]])
         zoom = float(it.get("zoom", 1.0) or 1.0)
-        w1, h1 = _fit_size(src, W, H, zoom)
+        osrc = src
+        if orient.active(it):
+            ow, oh = orient.canvas(src.get("width") or W, src.get("height") or H, it)
+            osrc = dict(src, width=ow, height=oh)
+        w1, h1 = _fit_size(osrc, W, H, zoom)
         x = (W - w1) / 2 + float(it.get("pos_x", 0.0) or 0.0) * W
         y = (H - h1) / 2 + float(it.get("pos_y", 0.0) or 0.0) * H
         # colore: fisso, oppure (se animato) miscela nel tempo tra il colore
@@ -162,6 +166,9 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
             c += f"setpts={_retime_expr(it, src_t, cs)},fps={fps:g}"
             if pre_pad > 0:
                 c += f",tpad=start_mode=clone:start_duration={pre_pad:.6f}"
+        of = orient.ffmpeg_filters(it, src.get("width") or W, src.get("height") or H, cs) if orient.active(it) else ""
+        if of:
+            c += "," + of
         c += f",scale={w1}:{h1}:flags=bicubic,setsar=1,format=rgb24"
 
         def lut_filter(k, grades):

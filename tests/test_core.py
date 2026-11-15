@@ -501,6 +501,50 @@ def test_audio_clean(tmp):
     print("pulizia audio ok")
 
 
+def test_orient(tmp):
+    """Specchio e rotazione (fissa e animata): anteprima ed esportazione concordano."""
+    from moviola import orient
+    ff = paths.ffmpeg_exe()
+    clip = os.path.join(tmp, "blk.mp4")
+    subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i",
+                    "color=c=black:s=640x360:r=25:d=2,drawbox=x=0:y=0:w=160:h=90:color=white:t=fill",
+                    "-pix_fmt", "yuv420p", clip], check=True)
+
+    def centroid(img):
+        m = img.mean(axis=2) > 128
+        ys, xs = np.nonzero(m)
+        return xs.mean() / img.shape[1], ys.mean() / img.shape[0]
+
+    base = np.zeros((360, 640, 3), np.uint8); base[:90, :160] = 255
+    cx, cy = centroid(orient.apply(base, {"flip_h": True}))
+    assert cx > 0.8 and cy < 0.2, (cx, cy)
+    r = orient.apply(base, {"rotate": 90.0}); assert r.shape[:2] == (640, 360)
+    cx, cy = centroid(r); assert cx > 0.6 and cy < 0.2, (cx, cy)     # orario: in alto a destra
+    r = orient.apply(base, {"rotate": 30.0}); assert r.shape[0] > 360 and r.shape[1] > 640
+    anim = {"rotate_anim": [[0.0, 0.0], [2.0, 90.0]]}
+    assert orient.canvas(640, 360, anim) == orient.canvas(640, 360, anim)
+    assert abs(orient.angle_at(anim, 1.0) - 45.0) < 1e-6
+
+    def export_frame(item_props, at):
+        pr = P.Project(); store = audio.AudioStore()
+        s_ = pr.add_source(clip, info(2)); pr.add_subclip(s_["id"], 0, 2)
+        pr.append_to_timeline(["clip1.1"])
+        v = pr.items_on("video", 0)[0]; v.update(item_props)
+        out = os.path.join(tmp, "o.mp4")
+        cmd, wd, dur = export.build_job(pr, store, out)
+        err = export.run_job(cmd, wd, dur, progress=lambda f: None); assert err is None, err
+        fr = subprocess.run([ff, "-v", "error", "-ss", str(at), "-i", out, "-frames:v", "1", "-f", "rawvideo",
+                             "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        return np.frombuffer(fr, np.uint8).reshape(360, 640, 3)
+    cx, cy = centroid(export_frame({"flip_h": True}, 0.5)); assert cx > 0.8 and cy < 0.2, (cx, cy)
+    cx, cy = centroid(export_frame({"rotate": 90.0}, 0.5)); assert cx > 0.55 and cy < 0.35, (cx, cy)
+    img = export_frame({"rotate_anim": [[0.0, 0.0], [1.5, 90.0]]}, 0.04)
+    cx, cy = centroid(img); assert cx < 0.4 and cy < 0.4, (cx, cy)      # all'inizio ancora dritta (tela fissa: più piccola)
+    img = export_frame({"rotate_anim": [[0.0, 0.0], [1.0, 90.0]]}, 1.8)
+    cx, cy = centroid(img); assert cx > 0.55 and cy < 0.4, (cx, cy)    # alla fine ruotata di 90°
+    print("specchio e rotazione ok")
+
+
 def test_update(tmp):
     import io, zipfile
     from moviola import update as U
@@ -549,6 +593,7 @@ def main():
     with tempfile.TemporaryDirectory() as t:
         test_bins(t)
         test_audio_clean(t)
+        test_orient(t)
         test_update(t)
     with tempfile.TemporaryDirectory() as t:
         test_export(t)

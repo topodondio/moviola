@@ -12,7 +12,7 @@ from collections import OrderedDict, deque
 import numpy as np
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 
-from . import audio, color, stabilize
+from . import audio, color, orient, stabilize
 from .decode import SourcePool
 
 # risoluzione dell'anteprima rispetto a quella del progetto (l'export usa sempre quella piena)
@@ -453,6 +453,8 @@ class Engine(QObject):
                     img = stabilize.warp(img, *cor)
             except Exception:
                 pass  # l'anteprima non si ferma per questo: si vede il fotogramma non corretto
+        if orient.active(it):
+            img = orient.apply(img, it, t - it["start"])
         return img
 
     def _xf(self, it):
