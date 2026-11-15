@@ -26,6 +26,9 @@ class _ResetSlider(QSlider):
     def mouseDoubleClickEvent(self, e):
         self.double_clicked.emit()
 
+    def wheelEvent(self, e):      # i valori cambiano solo con clic e trascinamento
+        e.ignore()
+
 
 class _ValueBox(QLineEdit):
     """Casella numerica semplice (al posto di QDoubleSpinBox, che su macOS senza
@@ -77,12 +80,8 @@ class _ValueBox(QLineEdit):
         else:
             super().keyPressEvent(e)
 
-    def wheelEvent(self, e):
-        if self.hasFocus():
-            self._nudge(1 if e.angleDelta().y() > 0 else -1)
-            e.accept()
-        else:
-            e.ignore()
+    def wheelEvent(self, e):      # la rotellina non modifica il valore
+        e.ignore()
 
 
 class AnimGraph(QWidget):
