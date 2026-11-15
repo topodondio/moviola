@@ -241,6 +241,21 @@ per esempio con un doppio clic su un pezzo).
 - L'esportazione parte da una copia del progetto: puoi continuare a montare.
   Usa sempre i file originali (mai i proxy).
 
+### Guide di composizione e ritaglio per i social
+
+Il pulsante **Guide** sotto i monitor (a destra dei comandi di riproduzione) disegna sopra
+l'anteprima, solo da guardare e senza entrare nel video esportato:
+
+- **Regola dei terzi**, **rapporto aureo** (linee al 38 e 62%), **spirale aurea**,
+  **diagonali**, **diagonali d'armonia**, **croce al centro**, **margini sicuri** per i titoli
+  (90% e 80%). Se ne possono accendere più d'una insieme.
+- **Mostra come verrebbe tagliato per…**: verticale 9:16 (Reel, Storie, TikTok, Shorts),
+  post Instagram 4:5, quadrato 1:1, 16:9, 4:3. Fuori dal ritaglio il fotogramma si
+  scurisce con bande nere semitrasparenti: è ciò che resterebbe esportando con
+  quel preset (che riempie il formato tagliando l'eccesso al centro). Le altre guide
+  si adattano all'area che resta.
+- Si vedono sia nel monitor TIMELINE sia in quello CLIP; la scelta viene ricordata.
+
 ### Capitoli e indicatori
 
 I segnaposti sono di due tipi:

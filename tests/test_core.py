@@ -613,6 +613,17 @@ def test_export_options(tmp):
     print("opzioni di esportazione ok")
 
 
+def test_guides(tmp):
+    from PySide6.QtCore import QRectF
+    from moviola.ui import guides as G
+    r = G.crop_rect(QRectF(0, 0, 1920, 1080), (9, 16))
+    assert abs(r.width() / r.height() - 9 / 16) < 1e-6 and r.height() == 1080 and abs(r.center().x() - 960) < 1e-6
+    r = G.crop_rect(QRectF(0, 0, 1080, 1920), (16, 9))                  # progetto verticale, taglio orizzontale
+    assert r.width() == 1080 and abs(r.height() - 607.5) < 1e-6
+    assert G.crop_rect(QRectF(0, 0, 100, 50), None) == QRectF(0, 0, 100, 50)
+    print("guide ok")
+
+
 def test_marker_kinds(tmp):
     from moviola import export
     pr = P.Project()
@@ -770,6 +781,7 @@ def main():
         test_bins(t)
         test_audio_clean(t)
         test_export_options(t)
+        test_guides(t)
         test_marker_kinds(t)
         test_archive(t)
         test_orient(t)

@@ -12,6 +12,7 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QSurfaceFormat
 from PySide6.QtWidgets import QWidget
 
+from .guides import draw_guides
 from .text_render import draw_overlay, text_box
 
 try:
@@ -94,6 +95,7 @@ class TextOverlay(QWidget):
         self.texts = []
         self.bars = 0.0
         self.highlight = None  # id della scritta selezionata
+        self.guides = None     # guide di composizione e maschera di ritaglio (solo da guardare)
         self._press = None
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
@@ -103,8 +105,13 @@ class TextOverlay(QWidget):
         x, y, w, h = fit_rect(1, 1, self.width(), self.height(), self.viewer.aspect)
         return QRectF(x, y, w, h)
 
+    def set_guides(self, g):
+        self.guides = g
+        self.update()
+
     def paintEvent(self, e):
-        if not self.texts and self.bars <= 0:
+        has_g = bool(self.guides and (self.guides.get("grids") or self.guides.get("crop")))
+        if not self.texts and self.bars <= 0 and not has_g:
             return
         p = QPainter(self)
         fr = self.project_rect()
@@ -120,6 +127,10 @@ class TextOverlay(QWidget):
                 p.setPen(QPen(QColor(232, 163, 61), 1, Qt.DashLine))
                 p.setBrush(Qt.NoBrush)
                 p.drawRect(text_box(item, fr))
+        if has_g:
+            p.setClipping(False)
+            p.setOpacity(1.0)
+            draw_guides(p, fr, self.guides)
         p.end()
 
     def mousePressEvent(self, e):

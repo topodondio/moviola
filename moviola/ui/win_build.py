@@ -125,6 +125,8 @@ class BuildMixin:
         self.dur_label.setStyleSheet("color:#888;")
         tr.addWidget(self.dur_label)
         tr.addStretch(1)
+        self.guides_btn = self._build_guides_button()
+        tr.addWidget(self.guides_btn)
         tl.addLayout(tr)
         self.src_panel = self._build_source_panel()
         self._make_viewer(self.cfg.get("gpu", True))
@@ -439,6 +441,7 @@ class BuildMixin:
         self.viewer = v
         self.src_viewer = sv
         self.mon_viewer = mv
+        self._apply_guides()
         v.overlay.drag_begin.connect(self._viewer_drag_begin)
         v.overlay.drag_move.connect(self._viewer_drag_move)
         v.overlay.drag_end.connect(self._viewer_drag_end)

@@ -32,6 +32,82 @@ class MonitorMixin:
             self.mon_viewer.aspect = w / max(h, 1)
         self.mon_viewer.set_frame(f)
 
+    # ------------------------------------------------- guide di composizione
+    def _guides(self):
+        g = self.cfg.get("guides")
+        if not isinstance(g, dict):
+            g = self.cfg["guides"] = {"grids": [], "crop": None}
+        return g
+
+    def _apply_guides(self):
+        g = self._guides()
+        for v in (self.viewer, self.src_viewer, self.mon_viewer):
+            if v is not None:
+                v.overlay.set_guides(g)
+        btn = getattr(self, "guides_btn", None)
+        if btn is not None:
+            on = bool(g.get("grids") or g.get("crop"))
+            btn.setText("Guide ●" if on else "Guide")
+            btn.setStyleSheet("color:#e8a33d;" if on else "")
+
+    def _build_guides_button(self):
+        from PySide6.QtGui import QAction, QActionGroup
+        from PySide6.QtWidgets import QMenu, QPushButton
+
+        from .guides import CROPS, GRIDS
+        btn = QPushButton("Guide")
+        btn.setFocusPolicy(Qt.NoFocus)
+        btn.setToolTip("Guide di composizione e ritaglio per i social: servono solo per guardare, "
+                       "non entrano nel video esportato")
+        menu = QMenu(btn)
+        self._grid_acts = {}
+        for key, text in GRIDS:
+            a = QAction(text, menu, checkable=True)
+            a.setChecked(key in self._guides().get("grids", []))
+            a.toggled.connect(lambda on, k=key: self._set_grid(k, on))
+            menu.addAction(a)
+            self._grid_acts[key] = a
+        menu.addSeparator()
+        head = menu.addAction("Mostra come verrebbe tagliato per…")
+        head.setEnabled(False)
+        grp = QActionGroup(menu)
+        grp.setExclusive(True)
+        self._crop_acts = {}
+        for key, text in [(None, "Nessun ritaglio")] + [(k, t) for k, t, _r in CROPS]:
+            a = QAction(text, menu, checkable=True)
+            a.setChecked(key == self._guides().get("crop"))
+            a.triggered.connect(lambda _c=False, k=key: self._set_crop(k))
+            grp.addAction(a)
+            menu.addAction(a)
+            self._crop_acts[key] = a
+        menu.addSeparator()
+        menu.addAction("Nascondi tutte le guide", self._guides_off)
+        btn.setMenu(menu)
+        return btn
+
+    def _set_grid(self, key, on):
+        g = self._guides()
+        s = [k for k in g.get("grids", []) if k != key]
+        g["grids"] = s + ([key] if on else [])
+        self._apply_guides()
+        self._save_cfg()
+
+    def _set_crop(self, key):
+        self._guides()["crop"] = key
+        self._apply_guides()
+        self._save_cfg()
+
+    def _guides_off(self):
+        g = self._guides()
+        g["grids"], g["crop"] = [], None
+        for a in self._grid_acts.values():
+            a.blockSignals(True)
+            a.setChecked(False)
+            a.blockSignals(False)
+        self._crop_acts[None].setChecked(True)
+        self._apply_guides()
+        self._save_cfg()
+
     def set_monitor2(self, on):
         self.mon_box.setVisible(on)
         self.cfg["monitor2"] = bool(on)
