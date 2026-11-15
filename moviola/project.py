@@ -927,17 +927,18 @@ class Project:
             applied = d
         return applied
 
-    def set_speed(self, ids, speed):
-        """Velocità costante (toglie l'eventuale curva)."""
+    def set_speed(self, ids, speed, keep_length=False):
+        """Velocità costante (toglie l'eventuale curva). Con keep_length la durata
+        in timeline resta quella che era e cambia la parte di file usata."""
         speed = max(0.1, min(8.0, float(speed)))
 
         def apply(i):
             i["speed"] = speed
             i.pop("speed_curve", None)
 
-        self._retime(ids, apply)
+        self._retime(ids, apply, keep_length)
 
-    def set_speed_curve(self, ids, points):
+    def set_speed_curve(self, ids, points, keep_length=False):
         """Velocità variabile secondo una curva (None = torna costante)."""
         if points:
             pts = sorted(([float(u), min(spd.V_MAX, max(spd.V_MIN, float(v)))] for u, v in points),
@@ -952,11 +953,13 @@ class Project:
             else:
                 i.pop("speed_curve", None)
 
-        self._retime(ids, apply)
+        self._retime(ids, apply, keep_length)
 
-    def _retime(self, ids, apply):
+    def _retime(self, ids, apply, keep_length=False):
         """Applica un cambio di velocità (anche ai collegati) lasciando fermo
-        l'inizio; quello che segue sulla timeline si sposta per non sovrapporsi."""
+        l'inizio; quello che segue sulla timeline si sposta per non sovrapporsi.
+        keep_length: la durata del pezzo non cambia, si allarga o si stringe la parte
+        di file usata (al massimo fino alla fine del file)."""
         groups = []
         seen = set()
         for iid in ids:
@@ -968,8 +971,14 @@ class Project:
             groups.append(g)
         for g in sorted(groups, key=lambda gg: -max(self.item_end(i) for i in gg)):
             old_end = max(self.item_end(i) for i in g)
+            old_dur = {i["id"]: self.item_dur(i) for i in g}
             for i in g:
                 apply(i)
+                if keep_length:
+                    src = self.source(i.get("source", "")) or {}
+                    top = float(src.get("duration") or 0.0)
+                    new_out = i["src_in"] + old_dur[i["id"]] * spd.mean_speed(i)
+                    i["src_out"] = min(new_out, top) if top > i["src_in"] + 0.04 else new_out
             new_end = max(self.item_end(i) for i in g)
             delta = new_end - old_end
             gids = {i["id"] for i in g}

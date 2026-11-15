@@ -501,6 +501,26 @@ def test_audio_clean(tmp):
     print("pulizia audio ok")
 
 
+def test_speed_keep_length():
+    """Velocità senza allungare: la durata in timeline resta, cambia la parte di file usata."""
+    pr = P.Project(); pr.add_source("/x/a.mp4", info(20)); pr.add_subclip("clip1", 2, 6)
+    it = [i for i in pr.append_to_timeline(["clip1.1"]) if i["kind"] == "video"][0]
+    au = [i for i in pr.linked(it) if i["kind"] == "audio"][0]
+    d0 = pr.item_dur(it)
+    pr.set_speed([it["id"]], 2.0, keep_length=True)
+    assert abs(pr.item_dur(it) - d0) < 1e-6 and abs(pr.item_dur(au) - d0) < 1e-6
+    assert abs((it["src_out"] - it["src_in"]) - 2 * d0) < 1e-6
+    pr.set_speed([it["id"]], 0.5, keep_length=True)
+    assert abs(pr.item_dur(it) - d0) < 1e-6 and abs((it["src_out"] - it["src_in"]) - d0 / 2) < 1e-6
+    pr.set_speed([it["id"]], 8.0, keep_length=True)            # oltre la fine del file: si ferma lì
+    assert it["src_out"] <= 20.0 + 1e-6 and pr.item_dur(it) < d0
+    pr2 = P.Project(); pr2.add_source("/x/a.mp4", info(20)); pr2.add_subclip("clip1", 2, 6)
+    it2 = [i for i in pr2.append_to_timeline(["clip1.1"]) if i["kind"] == "video"][0]
+    pr2.set_speed([it2["id"]], 2.0)                             # senza la spunta nel modello: si accorcia
+    assert abs(pr2.item_dur(it2) - d0 / 2) < 1e-6
+    print("velocità a durata fissa ok")
+
+
 def test_orient(tmp):
     """Specchio e rotazione (fissa e animata): anteprima ed esportazione concordano."""
     from moviola import orient
@@ -594,6 +614,7 @@ def main():
         test_bins(t)
         test_audio_clean(t)
         test_orient(t)
+        test_speed_keep_length()
         test_update(t)
     with tempfile.TemporaryDirectory() as t:
         test_export(t)

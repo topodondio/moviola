@@ -245,6 +245,14 @@ per esempio con un doppio clic su un pezzo).
   avanti; **F10** la sovrascrive.
 - In esportazione, «Solo il tratto tra I e O» esporta solo quel tratto.
 
+### Velocità: allungare o no la clip
+
+Sotto il comando velocità c'è la spunta **Allunga la clip nella timeline**.
+Spuntata, cambiando la velocità la clip diventa più lunga o più corta e ciò
+che segue si sposta. Non spuntata (predefinito), la clip resta lunga com'è:
+cambia solo la velocità, usando più o meno file originale (al massimo fino
+alla sua fine: se non basta, la clip si accorcia).
+
 ### Specchio e rotazione
 
 Nell'ispettore, per ogni clip video: **Specchia ↔ / ↕**, rotazione in gradi

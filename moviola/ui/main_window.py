@@ -118,6 +118,8 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
         ins.changed.connect(self._item_edit)
         ins.action.connect(self._inspector_action)
         ins.rot_anim.connect(self._rot_anim_edit)
+        ins.set_stretch(bool(self.cfg.get("speed_stretch", False)))
+        ins.stretch_toggled.connect(self._stretch_toggled)
         ins.rot_seek.connect(self._rot_seek)
         ins.preview_at.connect(self._preview_item_fraction)
         self.timeline.btn_text.clicked.connect(self.add_text)
@@ -186,6 +188,10 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
         src = self.engine.mode == "source"
         self.play_btn.setText("❚❚" if playing and not src else "▶")
         self.src_play_btn.setText("❚❚" if playing and src else "▶")
+
+    def _stretch_toggled(self, on):
+        self.cfg["speed_stretch"] = bool(on)
+        self._save_cfg()
 
     def show_current_source(self):
         if self.selected_ref:

@@ -146,6 +146,7 @@ class Inspector(QWidget):
     begin = Signal(str)
     changed = Signal(str, str, object)  # tipo pezzo ('video', 'audio', 'text'), chiave, valore
     action = Signal(str)  # 'fill', 'center', 'add_text'
+    stretch_toggled = Signal(bool)  # «allunga la clip» acceso/spento
     rot_anim = Signal(object)  # punti [[t, gradi]] della rotazione animata, o None = fissa
     rot_seek = Signal(float)  # tempo relativo al pezzo da mostrare nel visore
     preview_at = Signal(float)  # frazione del pezzo da mostrare nel visore (nodi della curva)
@@ -163,6 +164,8 @@ class Inspector(QWidget):
         self._loading = False
         self._w = {}
         self._speed_ui = {}
+        self._stretch_chks = []
+        self._stretch = False
 
         # pagina vuota
         empty = QWidget()
@@ -241,6 +244,22 @@ class Inspector(QWidget):
         row.addStretch(1)
         cl.addLayout(row)
         f.addRow(const)
+        st = QCheckBox("Allunga la clip nella timeline")
+        st.setToolTip("Spuntato: cambiando la velocità la clip diventa più lunga o più corta in timeline.\n"
+                      "Non spuntato: la clip resta lunga com'è e cambia solo la velocità "
+                      "(si usa più o meno file originale).")
+        st.setChecked(getattr(self, "_stretch", False))
+        self._stretch_chks.append(st)
+
+        def stretch_changed(on):
+            self._stretch = on
+            for o in self._stretch_chks:
+                if o.isChecked() != on:
+                    o.setChecked(on)
+            self.stretch_toggled.emit(on)
+
+        st.toggled.connect(stretch_changed)
+        f.addRow(st)
         chk = QCheckBox("Velocità variabile (curva)")
         f.addRow(chk)
         curve_box = QWidget()
@@ -294,7 +313,8 @@ class Inspector(QWidget):
         chk.toggled.connect(toggled)
         curve_box.setVisible(False)
         self._speed_ui[kind] = (chk, cw, dur, const, curve_box)
-        note = QLabel("Cambia la durata del pezzo; ciò che segue in timeline si sposta. "
+        note = QLabel("Con «Allunga la clip» la durata cambia e ciò che segue in timeline si sposta; "
+                      "senza, la durata resta e cambia la parte di file usata. "
                       "L'audio collegato segue la stessa velocità.")
         note.setWordWrap(True)
         note.setStyleSheet("color:#808080; font-size:11px;")
@@ -686,6 +706,14 @@ class Inspector(QWidget):
             self.changed.emit(kind, key, value)
 
     # -------------------------------------------------------------- dati
+    def stretch_on(self) -> bool:
+        return bool(self._stretch)
+
+    def set_stretch(self, on: bool):
+        self._stretch = bool(on)
+        for o in self._stretch_chks:
+            o.setChecked(bool(on))
+
     def show_item(self, item, count=1, duration=None, playhead=0.0):
         """Mostra le proprietà di un pezzo (None = pagina vuota)."""
         self._loading = True

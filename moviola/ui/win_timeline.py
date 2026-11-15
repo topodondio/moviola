@@ -342,15 +342,17 @@ class TimelineMixin:
         its = self._sel_items(kind)
         if not its:
             return
+        keep = not self.inspector.stretch_on()
+        d_before = {i["id"]: pr.item_dur(i) for i in its}
         if key == "speed":
-            pr.set_speed([i["id"] for i in its], value)
+            pr.set_speed([i["id"] for i in its], value, keep_length=keep)
         elif key == "trans":
             if value:
                 pr.set_transition([i["id"] for i in its], value["type"], value["dur"], value["audio"])
             else:
                 pr.set_transition([i["id"] for i in its], None)
         elif key == "speed_curve":
-            pr.set_speed_curve([i["id"] for i in its], value)
+            pr.set_speed_curve([i["id"] for i in its], value, keep_length=keep)
         elif key == "duration":
             for it in its:
                 it["src_out"] = it["src_in"] + max(pr.frame(), pr.snap(float(value)))
@@ -367,6 +369,10 @@ class TimelineMixin:
             if key.startswith("stab"):
                 self._ensure_stab(its)
                 self._update_stab_info()
+        if keep and key in ("speed", "speed_curve") and any(
+                abs(pr.item_dur(i) - d_before[i["id"]]) > 0.02 for i in its if i["id"] in d_before):
+            self.statusBar().showMessage("La clip ha raggiunto la fine del file originale: "
+                                         "si accorcia (spunta «Allunga la clip» per cambiarne la durata).", 6000)
         self._mark_dirty()
         self.timeline.view.update()
         if key in ("speed", "speed_curve", "duration"):
