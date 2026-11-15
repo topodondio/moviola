@@ -561,12 +561,12 @@ class BuildMixin:
         act(m, "Dissolvenza incrociata sui pezzi selezionati", lambda: self.timeline_action(
             "transition:dissolve", list(self.timeline.view.selection)), "Ctrl+T")
         sm = m.addMenu("Segnaposti")
-        act(sm, "Aggiungi segnaposto alla testina (sorgente: crea parte)", self.marker_or_part, "M")
+        act(sm, "Aggiungi indicatore alla testina (sorgente: crea parte)", self.marker_or_part, "M")
         act(m, "Estrai il tratto tra I e O (chiude il buco)", self.extract_range, "Shift+X")
         act(m, "Rimuovi il tratto tra I e O (lascia il buco)", lambda: self.extract_range(False), "Alt+Shift+X")
         act(m, "Togli i segni I/O dalla timeline", lambda: (self.project.checkpoint(), self.project.clear_tl_range(),
                                                           self._mark_dirty(), self.timeline.view.update()), "Alt+X")
-        act(sm, "Segnaposto con nome…", self.add_named_marker, "Alt+M")
+        act(sm, "Capitolo con nome…", self.add_named_marker, "Alt+M")
         act(sm, "Segnaposto precedente", lambda: self.jump_marker(-1), "Shift+Up")
         act(sm, "Segnaposto successivo", lambda: self.jump_marker(1), "Shift+Down")
         act(sm, "Elenco dei segnaposti…", self.show_markers, "Alt+L")

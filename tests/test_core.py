@@ -613,6 +613,21 @@ def test_export_options(tmp):
     print("opzioni di esportazione ok")
 
 
+def test_marker_kinds(tmp):
+    from moviola import export
+    pr = P.Project()
+    pr.add_source(os.path.join(tmp, "x.mp4"), info(10)); pr.add_subclip("clip1", 0, 10); pr.append_to_timeline(["clip1.1"])
+    pr.add_marker(2.0, "Intro")
+    pr.add_marker(4.0, kind="note")
+    pr.add_marker(6.0, "Fine", kind="chapter")
+    ch = export.chapters(pr)
+    assert [c[0] for c in ch] == ["Inizio", "Intro", "Fine"], ch      # l'indicatore non divide
+    assert not pr.is_chapter(pr.markers[1]) and pr.is_chapter({"t": 1})   # senza kind = capitolo
+    from moviola.ui.marker_dialog import chapters_text
+    assert "04" not in chapters_text(pr).replace("00:04", "XX") or "00:04" not in chapters_text(pr)
+    print("capitoli/indicatori ok")
+
+
 def test_archive(tmp):
     """Archivio del progetto: cartella autonoma con percorsi relativi."""
     import shutil
@@ -755,6 +770,7 @@ def main():
         test_bins(t)
         test_audio_clean(t)
         test_export_options(t)
+        test_marker_kinds(t)
         test_archive(t)
         test_orient(t)
         test_reverse(t)

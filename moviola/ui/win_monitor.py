@@ -104,15 +104,15 @@ class MonitorMixin:
         if self.engine.mode == "source":
             return self.create_subclip()
         self.project.checkpoint()
-        m = self.project.add_marker(self.engine.position)
+        m = self.project.add_marker(self.engine.position, kind="note")
         self.timeline.view.update()
         self._mark_dirty()
-        self.statusBar().showMessage(f"Segnaposto a {tc(m['t'], self.project.fps)}", 1500)
+        self.statusBar().showMessage(f"Indicatore a {tc(m['t'], self.project.fps)}", 1500)
 
     def add_named_marker(self):
         t = self.engine.position if self.engine.mode == "timeline" else \
             self.engine.source_positions.get("__timeline__", 0.0)
-        text, ok = QInputDialog.getText(self, "Segnaposto", "Nome del segnaposto:")
+        text, ok = QInputDialog.getText(self, "Capitolo", "Nome del capitolo:")
         if not ok:
             return
         self.project.checkpoint()

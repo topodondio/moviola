@@ -16,7 +16,7 @@ def chapters_text(project) -> str:
     """Elenco «00:00 Titolo» da incollare nella descrizione di un video. YouTube vuole
     il primo capitolo a 00:00."""
     rows = [(m["t"], (m.get("label") or "").strip() or f"Capitolo {n}")
-            for n, m in enumerate(project.markers, 1)]
+            for n, m in enumerate([m for m in project.markers if project.is_chapter(m)], 1)]
     if rows and rows[0][0] > 0.5:
         rows.insert(0, (0.0, "Inizio"))
     out = []
@@ -41,10 +41,11 @@ class MarkerDialog(QDialog):
         self.setMinimumSize(420, 340)
         lay = QVBoxLayout(self)
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Tempo", "Nome"])
+        self.tree.setHeaderLabels(["Tempo", "Nome", "Tipo"])
         self.tree.setRootIsDecorated(False)
         self.tree.setUniformRowHeights(True)
         self.tree.setColumnWidth(0, 110)
+        self.tree.setColumnWidth(1, 200)
         self.tree.itemDoubleClicked.connect(lambda it, _c: self._goto(it))
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
@@ -53,6 +54,8 @@ class MarkerDialog(QDialog):
         for text, fn, tip in (
             ("Vai", lambda: self._goto(self.tree.currentItem()), "Porta la testina sul segnaposto (doppio clic)"),
             ("Rinomina…", self._rename, "Dai un nome al segnaposto"),
+            ("Capitolo ⇄ indicatore", self._toggle_kind,
+             "Un capitolo divide il video all'esportazione; un indicatore è solo un promemoria"),
             ("Elimina", self._delete, "Elimina il segnaposto scelto"),
             ("Copia capitoli", self._copy, "Copia l'elenco «00:00 Titolo» per la descrizione di YouTube"),
         ):
@@ -76,7 +79,8 @@ class MarkerDialog(QDialog):
         self.tree.clear()
         fps = self.project.fps
         for m in self.project.markers:
-            it = QTreeWidgetItem([tc(m["t"], fps), m.get("label") or ""])
+            it = QTreeWidgetItem([tc(m["t"], fps), m.get("label") or "",
+                                 "Capitolo" if self.project.is_chapter(m) else "Indicatore"])
             it.setData(0, Qt.UserRole, m["id"])
             it.setIcon(1, self._chip(m.get("color") or MARKER_COLORS[0]))
             self.tree.addTopLevelItem(it)
@@ -105,6 +109,15 @@ class MarkerDialog(QDialog):
             self.changed.emit()
             self.refresh()
 
+    def _toggle_kind(self):
+        m = self.project.marker(self._current_id() or "")
+        if m is None:
+            return
+        self.checkpoint.emit()
+        m["kind"] = "note" if self.project.is_chapter(m) else "chapter"
+        self.changed.emit()
+        self.refresh()
+
     def _delete(self):
         mid = self._current_id()
         if mid:
@@ -127,6 +140,8 @@ class MarkerDialog(QDialog):
         cm = m.addMenu("Colore")
         for c, lab in zip(MARKER_COLORS, COLOR_NAMES):
             cm.addAction(QPixmap(0, 0), lab, lambda cc=c: self._color(cc))
+        m.addAction("Trasforma in indicatore" if self.project.is_chapter(self.project.marker(
+            self._current_id() or "") or {}) else "Trasforma in capitolo", self._toggle_kind)
         m.addAction("Elimina", self._delete)
         m.exec(self.tree.viewport().mapToGlobal(pos))
 

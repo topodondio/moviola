@@ -241,19 +241,30 @@ per esempio con un doppio clic su un pezzo).
 - L'esportazione parte da una copia del progetto: puoi continuare a montare.
   Usa sempre i file originali (mai i proxy).
 
-### Segnaposti
+### Capitoli e indicatori
 
-- **M** mette un segnaposto sulla timeline alla testina, anche durante la
-  riproduzione (comodo per battere il tempo della musica). Sul visore
-  sorgente M crea invece la parte, come Invio.
+I segnaposti sono di due tipi:
+
+- **Capitolo** (bandierina sul righello): divide il video. Conta per
+  l'esportazione «Capitoli» (un file per capitolo) e per l'elenco «00:00
+  Titolo» di YouTube. **Alt+M** lo crea con nome; tasto destro sul righello →
+  «Aggiungi capitolo qui».
+- **Indicatore** (piccolo rombo): un semplice promemoria, per battere il
+  tempo della musica o per appunti. Non influisce sull'esportazione.
+  **M** lo mette alla testina, anche durante la riproduzione (sul visore
+  sorgente M crea invece la parte, come Invio).
+
+Con il tasto destro su un segnaposto (o nell'elenco, «Capitolo ⇄ indicatore»)
+lo trasformi da un tipo all'altro. I progetti già fatti restano con i loro
+segnaposti come capitoli.
+
 - **Maiusc+M** mette un segnaposto **sul pezzo** selezionato (la musica, se
   c'è): si sposta insieme al pezzo.
 - I segnaposti attirano l'aggancio magnetico e le frecce ↑/↓ ci saltano
-  sopra. Sul righello si trascinano; clic destro per nome, colore,
+  sopra. Sul righello si trascinano; clic destro per nome, colore, tipo,
   eliminazione; doppio clic per rinominare.
-- **Alt+M** mette un segnaposto con nome e colore; **Alt+L** apre l'elenco
-  (vai a, rinomina, elimina, copia come capitoli per YouTube);
-  **Maiusc+↑/↓** salta al segnaposto precedente/successivo.
+- **Alt+L** apre l'elenco (vai a, rinomina, tipo, elimina, copia i capitoli
+  per YouTube); **Maiusc+↑/↓** salta al segnaposto precedente/successivo.
 
 ### Segni I/O, inserisci e sovrascrivi
 

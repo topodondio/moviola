@@ -280,7 +280,7 @@ class ExportPage(QWidget):
         a, b = pr.tl_range
         have_range = a is not None and b is not None and b > a
         sel = self._selection_span()
-        chap = export.chapters(pr) if pr.markers else []
+        chap = export.chapters(pr) if any(pr.is_chapter(m) for m in pr.markers) else []
         self.radios["range"].setEnabled(have_range)
         self.radios["range"].setText("Il tratto tra I e O" + (f"  ({_fmt_time(b - a)})" if have_range else
                                                               "  (segna I e O in timeline)"))

@@ -96,7 +96,8 @@ def chapters(project):
     """Capitoli dai segnaposti: [(nome, inizio, fine)]. Il primo parte da zero (se il
     primo segnaposto non è lì c'è un capitolo «Inizio»), l'ultimo arriva alla fine."""
     end = project.timeline_end()
-    pts = [(float(m["t"]), (m.get("label") or "").strip()) for m in project.markers if 0 <= m["t"] < end - 1e-6]
+    pts = [(float(m["t"]), (m.get("label") or "").strip()) for m in project.markers
+           if project.is_chapter(m) and 0 <= m["t"] < end - 1e-6]
     pts.sort(key=lambda p: p[0])
     if not pts or pts[0][0] > 0.05:
         pts.insert(0, (0.0, "Inizio"))

@@ -1135,13 +1135,19 @@ class Project:
     def markers(self):
         return self.data.setdefault("markers", [])
 
-    def add_marker(self, t, label="", color_=None):
+    @staticmethod
+    def is_chapter(m):
+        """Capitolo (divide il video, va nell'esportazione) o indicatore generico
+        (solo un promemoria: musica, appunti). Senza «kind» = capitolo, come in passato."""
+        return m.get("kind", "chapter") == "chapter"
+
+    def add_marker(self, t, label="", color_=None, kind="chapter"):
         t = self.snap(max(0.0, t))
         for m in self.markers:
             if abs(m["t"] - t) < 1e-6:
                 return m
-        m = {"id": _uid(), "t": t, "label": label,
-             "color": color_ or MARKER_COLORS[0]}
+        m = {"id": _uid(), "t": t, "label": label, "kind": kind,
+             "color": color_ or (MARKER_COLORS[0] if kind == "chapter" else MARKER_COLORS[5])}
         self.markers.append(m)
         self.markers.sort(key=lambda x: x["t"])
         return m

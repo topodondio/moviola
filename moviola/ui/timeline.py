@@ -352,8 +352,12 @@ class TimelineView(QWidget):
             p.drawLine(QPointF(x, RULER), QPointF(x, self.height()))
             p.setPen(Qt.NoPen)
             p.setBrush(c)
-            p.drawPolygon(QPolygonF([QPointF(x - 5, RULER - 11), QPointF(x + 5, RULER - 11),
-                                     QPointF(x + 5, RULER - 5), QPointF(x, RULER), QPointF(x - 5, RULER - 5)]))
+            if self.project.is_chapter(m):      # capitolo: bandierina grande
+                p.drawPolygon(QPolygonF([QPointF(x - 5, RULER - 11), QPointF(x + 5, RULER - 11),
+                                         QPointF(x + 5, RULER - 5), QPointF(x, RULER), QPointF(x - 5, RULER - 5)]))
+            else:                               # indicatore generico: piccolo rombo
+                p.drawPolygon(QPolygonF([QPointF(x, RULER - 9), QPointF(x + 3.5, RULER - 5.5),
+                                         QPointF(x, RULER - 2), QPointF(x - 3.5, RULER - 5.5)]))
             if m.get("label"):
                 p.setPen(c)
                 p.drawText(QPointF(x + 7, RULER - 4), m["label"])
@@ -1099,8 +1103,12 @@ class TimelineView(QWidget):
     def _marker_menu(self, mk, gp, t):
         m = QMenu(self)
         if mk is None:
-            m.addAction("Aggiungi segnaposto qui", lambda: self.action.emit("add_marker_at", [t]))
+            m.addAction("Aggiungi indicatore qui", lambda: self.action.emit("add_marker_at", [t, "note"]))
+            m.addAction("Aggiungi capitolo qui", lambda: self.action.emit("add_marker_at", [t, "chapter"]))
         else:
+            chap = self.project.is_chapter(mk)
+            m.addAction("Trasforma in indicatore" if chap else "Trasforma in capitolo",
+                        lambda: self.action.emit("toggle_marker_kind", [mk["id"]]))
             m.addAction("Rinomina segnaposto…", lambda: self.action.emit("rename_marker", [mk["id"]]))
             cm = m.addMenu("Colore")
             for c, lab in zip(MARKER_COLORS, ("Arancione", "Rosso", "Verde", "Blu", "Viola", "Bianco")):

@@ -201,7 +201,13 @@ class TimelineMixin:
                     pr.item(i).pop("gain_pts", None)
         elif action == "add_marker_at":
             pr.checkpoint()
-            pr.add_marker(float(ids[0]))
+            pr.add_marker(float(ids[0]), kind=ids[1] if len(ids) > 1 else "note")
+        elif action == "toggle_marker_kind":
+            mk = pr.marker(ids[0])
+            if mk is None:
+                return
+            pr.checkpoint()
+            mk["kind"] = "note" if pr.is_chapter(mk) else "chapter"
         elif action == "rename_marker":
             mk = pr.marker(ids[0])
             if mk is None:
