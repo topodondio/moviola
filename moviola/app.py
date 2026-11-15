@@ -106,6 +106,9 @@ def main():
     sys.excepthook = excepthook
 
     from .ui.main_window import MainWindow
+    from .ui import nowheel
+
+    nowheel.install(app)
 
     win = MainWindow(cfg)
     try:
