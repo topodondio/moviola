@@ -36,6 +36,7 @@ class FrameSource:
         self._pending = None  # fotogramma letto ma non ancora usato
         self._last = None  # (t, h, array)
         self.last_time = 0.0  # tempo reale dell'ultimo fotogramma restituito
+        self._back = ([], [], 0)  # (tempi, fotogrammi, altezza) del gruppo letto per andare all'indietro
 
     def close(self):
         try:
@@ -63,6 +64,42 @@ class FrameSource:
         if (w, h) == (frame.width, frame.height):
             return frame.to_ndarray(format="rgb24")
         return frame.reformat(width=w, height=h, format="rgb24").to_ndarray()
+
+    def get_back(self, t: float, height: int = 540) -> np.ndarray | None:
+        """Come get(), per la riproduzione all'indietro: si decodifica in avanti dal
+        fotogramma chiave fino a t e si tengono tutti i fotogrammi del gruppo, così i
+        fotogrammi che servono subito dopo (più indietro) sono già pronti."""
+        times, frames, h0 = self._back
+        if h0 != height:
+            times, frames = [], []
+        i = _nearest_back(times, frames, t, self.half)
+        if i >= 0:
+            return frames[i]
+        times, frames = [], []
+        self._seek(t)
+        limit = 0
+        while True:
+            try:
+                frame = next(self._iter)
+            except Exception:
+                break
+            ft = self._frame_time(frame)
+            if ft - self.half > t:
+                break
+            arr = self._convert(frame, height)
+            if not limit:
+                limit = max(30, int(120e6 / max(arr.nbytes, 1)))
+            times.append(ft)
+            frames.append(arr)
+            if len(frames) > limit:
+                del times[0], frames[0]
+        self._iter = None  # la lettura normale riparte da zero
+        self._back = (times, frames, height)
+        if not frames:
+            return None
+        self.last_time = times[-1]
+        i = _nearest_back(times, frames, t, self.half)
+        return frames[i if i >= 0 else len(frames) - 1]
 
     def get(self, t: float, height: int = 540) -> np.ndarray | None:
         """Fotogramma (RGB uint8) visibile al tempo t (secondi dall'inizio)."""
@@ -106,6 +143,16 @@ class FrameSource:
                 self.last_time = ft
                 return arr
             prev = frame
+
+
+def _nearest_back(times, frames, t, half):
+    """Il fotogramma più vicino a t, se c'è davvero (entro mezzo fotogramma)."""
+    import bisect
+
+    i = bisect.bisect_right(times, t + half) - 1
+    if i >= 0 and abs(times[i] - t) <= half * 1.01 + 1e-6:
+        return i
+    return -1
 
 
 class SourcePool:

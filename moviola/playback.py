@@ -13,6 +13,7 @@ import numpy as np
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 
 from . import audio, color, orient, stabilize
+from . import speed as spd
 from .decode import SourcePool
 
 # risoluzione dell'anteprima rispetto a quella del progetto (l'export usa sempre quella piena)
@@ -441,8 +442,11 @@ class Engine(QObject):
         if fs is None:
             return None
         st = float(pr.src_time(it, t))
+        back = spd.is_reversed(it)
+        if back:   # all'indietro il primo fotogramma è l'ultimo dentro la parte, non quello dopo
+            st = max(float(it["src_in"]), st - 1.0 / max(fs.fps, 1.0))
         st = min(max(0.0, st), max(0.0, float(src.get("duration") or 0.0) - 0.5 / max(fs.fps, 1.0)))
-        img = fs.get(st, h)
+        img = fs.get_back(st, h) if back else fs.get(st, h)
         if img is None:
             return None
         img = np.ascontiguousarray(img)

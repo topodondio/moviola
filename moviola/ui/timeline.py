@@ -609,6 +609,8 @@ class TimelineView(QWidget):
         n = int(x1 - x0)
         xs = np.arange(n, dtype=np.float32) + x0
         ts = it["src_in"] + (xs - rect.left()) / self.pps
+        if it.get("reverse"):
+            ts = it["src_out"] - (xs - rect.left()) / self.pps
         idx = np.clip((ts * 100).astype(np.int64), 0, len(pk) - 1)
         pkf = np.asarray(pk, dtype=np.float32)
         if 100 / self.pps > 1.5 and n > 1:

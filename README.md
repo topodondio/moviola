@@ -253,6 +253,15 @@ che segue si sposta. Non spuntata (predefinito), la clip resta lunga com'è:
 cambia solo la velocità, usando più o meno file originale (al massimo fino
 alla sua fine: se non basta, la clip si accorcia).
 
+### Riproduzione inversa
+
+Nell'ispettore, sotto la velocità: **Riproduzione inversa**. La clip e il suo
+audio collegato scorrono all'indietro (dalla fine all'inizio della parte
+usata); durata, velocità e curva di velocità restano valide. Tagli e
+allungamenti dei bordi funzionano come sempre. In esportazione l'inversa
+tiene in memoria tutta la parte della clip: meglio sotto i 25 secondi, o
+tagliala a pezzi.
+
 ### Specchio e rotazione
 
 Nell'ispettore, per ogni clip video: **Specchia ↔ / ↕**, rotazione in gradi

@@ -127,13 +127,23 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
         n_inputs += 1
         sdur = float(src.get("duration") or 0.0)
         freeze = it.get("freeze") is not None
-        raw_t = float(project.src_time(it, it["start"] + cs))
-        src_t = min(max(0.0, raw_t), max(0.0, sdur - 2 * fr))
-        pre_pad = 0.0
-        if raw_t < 0 and not freeze:  # prima dell'inizio del file: primo fotogramma fermo
-            pre_pad = -raw_t / max(spd.speed_at(it, it["start"] + cs), 1e-3)
-        src_end = float(project.src_time(it, it["start"] + cs + lead + dur))
-        span = 1.0 if freeze else max(0.2, min(src_end, sdur) - src_t + 0.5)
+        reverse = spd.is_reversed(it)
+        if reverse:
+            # all'indietro si prende tutta la parte di file, la si rovescia e poi si
+            # procede come per una clip normale partendo dall'inizio del pezzo
+            lead = off
+            cs = 0.0
+            raw_t = src_t = min(max(0.0, float(it["src_in"])), max(0.0, sdur - 2 * fr))
+            pre_pad = 0.0
+            span = max(0.2, float(it["src_out"]) - float(it["src_in"]))
+        else:
+            raw_t = float(project.src_time(it, it["start"] + cs))
+            src_t = min(max(0.0, raw_t), max(0.0, sdur - 2 * fr))
+            pre_pad = 0.0
+            if raw_t < 0 and not freeze:  # prima dell'inizio del file: primo fotogramma fermo
+                pre_pad = -raw_t / max(spd.speed_at(it, it["start"] + cs), 1e-3)
+            src_end = float(project.src_time(it, it["start"] + cs + lead + dur))
+            span = 1.0 if freeze else max(0.2, min(src_end, sdur) - src_t + 0.5)
         inputs.extend(["-ss", f"{src_t:.6f}", "-t", f"{span:.6f}", "-i", src["path"]])
         zoom = float(it.get("zoom", 1.0) or 1.0)
         osrc = src
@@ -160,13 +170,23 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
             name = f"st{idx}"
             c += stabilize.export_filters(track, it, name, ws, hs, src_t, src_t + span, lead_of(src["path"]),
                                           os.path.join(workdir, f"stab_{idx}.cmd")) + ","
+        of = orient.ffmpeg_filters(it, src.get("width") or W, src.get("height") or H, cs) if orient.active(it) else ""
+        if reverse:
+            # rovescia già alla dimensione finale e in yuv420p, per non riempire la memoria
+            if orient.animated(it):   # la rotazione animata va applicata dopo, sul tempo del pezzo
+                wp, hp = _fit_size(src, W, H, zoom)
+            else:
+                wp, hp = w1, h1
+                if of:
+                    c += of + ","
+                    of = ""
+            c += f"scale={wp}:{hp}:flags=bicubic,format=yuv420p,reverse,setpts=PTS-STARTPTS,"
         if freeze:
             c += f"trim=end_frame=1,setpts=PTS-STARTPTS,fps={fps:g}"
         else:
             c += f"setpts={_retime_expr(it, src_t, cs)},fps={fps:g}"
             if pre_pad > 0:
                 c += f",tpad=start_mode=clone:start_duration={pre_pad:.6f}"
-        of = orient.ffmpeg_filters(it, src.get("width") or W, src.get("height") or H, cs) if orient.active(it) else ""
         if of:
             c += "," + of
         c += f",scale={w1}:{h1}:flags=bicubic,setsar=1,format=rgb24"

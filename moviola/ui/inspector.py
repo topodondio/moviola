@@ -93,7 +93,7 @@ class ColorButton(QPushButton):
             self.picked.emit(c.name())
 
 
-_FALLBACK = {("video", "flip_h"): False, ("video", "flip_v"): False, ("video", "stab"): False, ("video", "stab_strength"): 0.5, ("video", "stab_crop"): 0.10,
+_FALLBACK = {("video", "reverse"): False, ("audio", "reverse"): False, ("video", "flip_h"): False, ("video", "flip_v"): False, ("video", "stab"): False, ("video", "stab_strength"): 0.5, ("video", "stab_crop"): 0.10,
              ("text", "outline"): False, ("text", "outline_w"): 0.06, ("text", "glow"): False,
              ("text", "glow_amt"): 0.6, ("text", "spacing"): 0.0, ("text", "caps"): False,
              ("text", "anim_in"): "none", ("text", "anim_in_dur"): 0.6,
@@ -260,6 +260,10 @@ class Inspector(QWidget):
 
         st.toggled.connect(stretch_changed)
         f.addRow(st)
+        rv = self._check(kind, "reverse", "Riproduzione inversa")
+        rv.setToolTip("La clip (con il suo audio collegato) scorre all'indietro, dalla fine all'inizio "
+                      "della parte usata.")
+        f.addRow(rv)
         chk = QCheckBox("Velocità variabile (curva)")
         f.addRow(chk)
         curve_box = QWidget()

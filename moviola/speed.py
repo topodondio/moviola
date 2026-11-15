@@ -81,8 +81,20 @@ def item_dur(it) -> float:
     return (it["src_out"] - it["src_in"]) / mean_speed(it)
 
 
+def is_reversed(it) -> bool:
+    return bool(it.get("reverse")) and it.get("freeze") is None and not is_static(it)
+
+
 def src_time(it, t):
-    """Tempo sorgente al tempo t della timeline (t può essere un array)."""
+    """Tempo sorgente al tempo t della timeline (t può essere un array). In
+    riproduzione inversa si percorre la parte di file da src_out verso src_in."""
+    res = _fwd_src_time(it, t)
+    if is_reversed(it):
+        return it["src_in"] + it["src_out"] - res
+    return res
+
+
+def _fwd_src_time(it, t):
     if it.get("freeze") is not None:
         f = float(it["freeze"])
         return np.full(np.shape(t), f) if isinstance(t, np.ndarray) else f
@@ -105,6 +117,8 @@ def tl_time(it, s):
     """Inverso di src_time: tempo in timeline in cui si vede il tempo sorgente s."""
     if is_static(it):
         return it["start"]
+    if is_reversed(it):
+        s = it["src_in"] + it["src_out"] - s
     pts = curve_points(it)
     if pts is None:
         return it["start"] + (s - it["src_in"]) / const_speed(it)
@@ -142,5 +156,5 @@ def inverse_knots(it, n=64):
     per ricostruire nell'export il tempo di uscita di ogni fotogramma."""
     T = item_dur(it)
     xs = np.linspace(0.0, T, n + 1)
-    ss = np.asarray(src_time(it, it["start"] + xs)) - it["src_in"]
+    ss = np.asarray(_fwd_src_time(it, it["start"] + xs)) - it["src_in"]
     return list(zip(ss.tolist(), xs.tolist()))

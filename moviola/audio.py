@@ -175,9 +175,10 @@ def _item_chunk(data, it, a, b, rate):
     if n <= 0:
         return None
     curve = spd.curve_points(it) is not None
+    rev = spd.is_reversed(it)
     sp = spd.const_speed(it)
     src0 = (it["src_in"] + (a - it["start"]) * sp) * rate
-    if abs(sp - 1.0) < 1e-6 and not curve:
+    if abs(sp - 1.0) < 1e-6 and not curve and not rev:
         i0 = int(round(src0))
         i1 = min(i0 + n, data.shape[0])
         if i1 <= max(i0, 0):
@@ -187,7 +188,7 @@ def _item_chunk(data, it, a, b, rate):
         chunk[lo - i0:i1 - i0] = data[lo:i1]
         src_sec = (i0 + np.arange(n, dtype=np.float64)) / rate
     else:
-        if curve:
+        if curve or rev:
             pos = np.asarray(spd.src_time(it, a + np.arange(n, dtype=np.float64) / rate)) * rate
         else:
             pos = src0 + np.arange(n, dtype=np.float64) * sp
@@ -240,7 +241,7 @@ def _extensions(project):
 def _extended(it, pre, post):
     """Copia del pezzo allungata prima/dopo, con dissolvenza sull'allungamento
     (incrocio audio delle transizioni)."""
-    if spd.curve_points(it) is not None:
+    if spd.curve_points(it) is not None or spd.is_reversed(it):
         return it
     sp = spd.const_speed(it)
     e = dict(it)

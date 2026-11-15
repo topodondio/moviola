@@ -508,6 +508,8 @@ class Project:
         new_out = self.src_time(it, b)
         if pts is not None:
             it["speed_curve"] = spd.sub_curve(pts, (a - s) / T, (b - s) / T)
+        if spd.is_reversed(it):
+            new_in, new_out = new_out, new_in
         it["src_in"], it["src_out"] = new_in, new_out
         it["start"] = a
 
@@ -756,16 +758,19 @@ class Project:
             text = spd.is_static(g)
             src = self.source(g["source"]) if not text else None
             length = self.item_dur(g)
+            rev = spd.is_reversed(g)
+            fdur = (src or {}).get("duration") or 1e9
             if edge == "left":
+                room = (fdur - g["src_out"]) / sp if rev else g["src_in"] / sp   # file disponibile oltre il bordo
                 if ripple:
-                    lo = max(lo, -1e6 if text else -g["src_in"] / sp)
+                    lo = max(lo, -1e6 if text else -room)
                 else:
-                    lo = max(lo, -g["start"] if text else max(-g["src_in"] / sp, -g["start"]))
+                    lo = max(lo, -g["start"] if text else max(-room, -g["start"]))
                 hi = min(hi, length - fr)
             else:
                 dur = src["duration"] if src else (1e9 if text else g["src_out"])
                 lo = max(lo, -(length - fr))
-                hi = min(hi, (dur - g["src_out"]) / sp)
+                hi = min(hi, (g["src_in"] / sp) if rev else (dur - g["src_out"]) / sp)
         d = max(lo, min(hi, d))
         if abs(d) < 1e-9:
             return
@@ -787,10 +792,15 @@ class Project:
                     g["start"] += d
                 if spd.is_static(g):
                     g["src_out"] -= d
+                elif spd.is_reversed(g):
+                    g["src_out"] -= d * sp
                 else:
                     g["src_in"] += d * sp
             else:
-                g["src_out"] += d * sp
+                if spd.is_reversed(g):
+                    g["src_in"] -= d * sp
+                else:
+                    g["src_out"] += d * sp
         for g in group:
             self.clear_range(lane(g), g["track"], g["start"], self.item_end(g), exclude=ids)
 
@@ -927,6 +937,22 @@ class Project:
             applied = d
         return applied
 
+    def set_reverse(self, ids, on):
+        """Riproduzione inversa (anche dei collegati): la durata non cambia."""
+        seen = set()
+        for iid in ids:
+            it = self.item(iid)
+            if it is None:
+                continue
+            for g in self.linked(it):
+                if g["id"] not in seen and not spd.is_static(g) and not is_overlay(g):
+                    seen.add(g["id"])
+                    if on:
+                        g["reverse"] = True
+                    else:
+                        g.pop("reverse", None)
+        return seen
+
     def set_speed(self, ids, speed, keep_length=False):
         """Velocità costante (toglie l'eventuale curva). Con keep_length la durata
         in timeline resta quella che era e cambia la parte di file usata."""
@@ -977,8 +1003,12 @@ class Project:
                 if keep_length:
                     src = self.source(i.get("source", "")) or {}
                     top = float(src.get("duration") or 0.0)
-                    new_out = i["src_in"] + old_dur[i["id"]] * spd.mean_speed(i)
-                    i["src_out"] = min(new_out, top) if top > i["src_in"] + 0.04 else new_out
+                    span = old_dur[i["id"]] * spd.mean_speed(i)
+                    if spd.is_reversed(i):   # l'inizio visto in timeline (src_out) resta fermo
+                        i["src_in"] = max(0.0, i["src_out"] - span)
+                    else:
+                        new_out = i["src_in"] + span
+                        i["src_out"] = min(new_out, top) if top > i["src_in"] + 0.04 else new_out
             new_end = max(self.item_end(i) for i in g)
             delta = new_end - old_end
             gids = {i["id"] for i in g}

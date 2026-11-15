@@ -346,6 +346,12 @@ class TimelineMixin:
         d_before = {i["id"]: pr.item_dur(i) for i in its}
         if key == "speed":
             pr.set_speed([i["id"] for i in its], value, keep_length=keep)
+        elif key == "reverse":
+            pr.set_reverse([i["id"] for i in its], bool(value))
+            long_ = [i for i in its if i["kind"] == "video" and bool(value) and i["src_out"] - i["src_in"] > 25]
+            if long_:
+                self.statusBar().showMessage("Clip lunga all'indietro: in esportazione serve molta memoria "
+                                             "(meglio sotto i 25 secondi, o tagliala a pezzi).", 7000)
         elif key == "trans":
             if value:
                 pr.set_transition([i["id"] for i in its], value["type"], value["dur"], value["audio"])

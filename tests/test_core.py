@@ -521,6 +521,58 @@ def test_speed_keep_length():
     print("velocità a durata fissa ok")
 
 
+def test_reverse(tmp):
+    """Riproduzione inversa: tempi sorgente, tagli, audio ed esportazione."""
+    from moviola import speed as spd
+    pr = P.Project(); pr.add_source("/x/a.mp4", info(20)); pr.add_subclip("clip1", 2, 6)
+    its = pr.append_to_timeline(["clip1.1"])
+    v = [i for i in its if i["kind"] == "video"][0]; a = [i for i in its if i["kind"] == "audio"][0]
+    d = pr.item_dur(v)
+    pr.set_reverse([v["id"]], True)
+    assert v.get("reverse") and a.get("reverse")                       # anche il collegato
+    assert abs(pr.src_time(v, v["start"]) - 6.0) < 1e-9 and abs(pr.src_time(v, v["start"] + d) - 2.0) < 1e-9
+    assert abs(spd.tl_time(v, 5.0) - (v["start"] + 1.0)) < 1e-9
+    pr.set_speed([v["id"]], 1.25, keep_length=True)                      # a durata fissa: l'inizio visto resta a 6 s
+    assert abs(pr.item_dur(v) - d) < 1e-6 and abs(v["src_out"] - 6.0) < 1e-6 and abs(v["src_in"] - (6 - 1.25 * d)) < 1e-6
+    pr.set_speed([v["id"]], 1.0, keep_length=True)
+    # taglio a metà: la parte dopo il taglio mostra la prima metà del file
+    pr.split_at(v["start"] + 2.0, [v["id"]])
+    parts = sorted((i for i in pr.items if i["kind"] == "video"), key=lambda i: i["start"])
+    assert abs(parts[0]["src_out"] - 6.0) < 1e-6 and abs(parts[0]["src_in"] - 4.0) < 1e-6, parts[0]
+    assert abs(parts[1]["src_out"] - 4.0) < 1e-6 and abs(parts[1]["src_in"] - 2.0) < 1e-6, parts[1]
+    # bordo sinistro allungato: si prende file dopo src_out
+    pr.trim_item(parts[0]["id"], "left", parts[0]["start"], linked=False)
+    # audio: la rampa 0..1 diventa 1..0
+    rate = 1000
+    data = np.tile(np.linspace(0, 30000, 20 * rate, dtype=np.float32)[:, None], (1, 2))
+    pr2 = P.Project(); pr2.add_source("/x/a.mp4", info(20)); pr2.add_subclip("clip1", 4, 8)
+    its2 = pr2.append_to_timeline(["clip1.1"]); a2 = [i for i in its2 if i["kind"] == "audio"][0]
+    c1 = audio._item_chunk(data, a2, a2["start"], a2["start"] + 4, rate)
+    a2["reverse"] = True
+    c2 = audio._item_chunk(data, a2, a2["start"], a2["start"] + 4, rate)
+    assert c1[10, 0] < c1[3000, 0] and c2[10, 0] > c2[3000, 0], (c1[10, 0], c1[3000, 0], c2[10, 0], c2[3000, 0])
+    # esportazione: clip con un ramp di colore nel tempo (rosso → blu), all'indietro diventa blu → rosso
+    ff = paths.ffmpeg_exe()
+    clip = os.path.join(tmp, "ramp.mp4")
+    subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i",
+                    "color=c=red:s=320x180:r=25:d=1,format=rgb24[a];color=c=blue:s=320x180:r=25:d=1,format=rgb24[b];"
+                    "[a][b]concat=n=2:v=1:a=0", "-pix_fmt", "yuv420p", clip], check=True)
+    pr3 = P.Project(); store = audio.AudioStore()
+    s3 = pr3.add_source(clip, info(2)); pr3.add_subclip(s3["id"], 0, 2)
+    pr3.append_to_timeline(["clip1.1"])
+    v3 = pr3.items_on("video", 0)[0]; v3["reverse"] = True
+    out = os.path.join(tmp, "rev.mp4")
+    cmd, wd, dur = export.build_job(pr3, store, out)
+    err = export.run_job(cmd, wd, dur, progress=lambda f: None); assert err is None, err
+    def px(at):
+        fr = subprocess.run([ff, "-v", "error", "-ss", str(at), "-i", out, "-frames:v", "1", "-f", "rawvideo",
+                             "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        return np.frombuffer(fr, np.uint8).reshape(360, 640, 3).reshape(-1, 3).mean(0)
+    p0, p1 = px(0.2), px(1.8)
+    assert p0[2] > 150 > p0[0] and p1[0] > 150 > p1[2], (p0, p1)
+    print("riproduzione inversa ok")
+
+
 def test_orient(tmp):
     """Specchio e rotazione (fissa e animata): anteprima ed esportazione concordano."""
     from moviola import orient
@@ -614,6 +666,7 @@ def main():
         test_bins(t)
         test_audio_clean(t)
         test_orient(t)
+        test_reverse(t)
         test_speed_keep_length()
         test_update(t)
     with tempfile.TemporaryDirectory() as t:
