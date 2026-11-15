@@ -394,6 +394,21 @@ piccolo o la timeline. **Maiusc+← / →** salta di un secondo.
 
 Tutte le scorciatoie: menu Aiuto → Scorciatoie (F1).
 
+## Archiviare un progetto
+
+In **ARCHIVIO PROGETTI** seleziona un progetto e clicca **Archivia…**. Scegli cosa mettere nella cartella:
+
+- **Solo progetto** – il file, le copie di sicurezza e l'elenco dei file (piccolo; si può comprimere in .zip);
+- **Progetto + clip usate in timeline** (consigliato) – in più i video che servono al montaggio, copiati interi;
+- **Progetto + tutte le clip** – anche quelle non usate.
+
+Facoltativo: aggiungere i video esportati. Prima vedi lo spazio necessario e quello libero, e gli
+originali che non si trovano; durante c'è la barra di avanzamento con «Annulla» (nessuna cartella a metà).
+Il risultato è una cartella `Nome_archivio/` con `Nome.moviola`, `media/`, `esportazioni/`,
+`elenco-file.txt` e `LEGGIMI.txt`; i percorsi sono relativi, quindi la puoi spostare su un altro disco
+e riaprirla senza ricollegare nulla. Le dimensioni dei file copiati vengono controllate e il progetto
+risulta «archiviato» nell'elenco. Gli originali non vengono mai cancellati da Moviola.
+
 ## Perché l'anteprima resta fluida
 
 - **Colore sulla scheda video**: tutte le regolazioni vengono "cotte" in una

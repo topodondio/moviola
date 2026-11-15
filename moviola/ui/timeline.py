@@ -1261,6 +1261,7 @@ class TimelinePanel(QWidget):
         bar.addStretch(1)
         self.btn_fit.setToolTip("Mostra tutta la timeline (Maiusc+Z)")
         bar.addWidget(self.btn_fit)
+        bar.addSpacing(14)
         self.zoom_label = QLabel("Zoom")
         bar.addWidget(self.zoom_label)
         self.zoom = QSlider(Qt.Horizontal)

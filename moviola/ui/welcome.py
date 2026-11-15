@@ -129,11 +129,13 @@ class ProjectsPanel(QWidget):
         self.b_dup = QPushButton("Duplica")
         self.b_ren = QPushButton("Rinomina")
         self.b_del = QPushButton("Elimina")
+        self.b_arch = QPushButton("Archivia…")
+        self.b_arch.setToolTip("Crea una cartella con il progetto e i video usati, da conservare o spostare")
         self.b_show = QPushButton("Mostra")
         self.b_show.setToolTip("Mostra il file nel Finder / in Esplora risorse")
         self.b_open = QPushButton("Apri")
         self.b_open.setDefault(True)
-        for w in (b_new, b_browse, self.b_dup, self.b_ren, self.b_del, self.b_show):
+        for w in (b_new, b_browse, self.b_dup, self.b_ren, self.b_del, self.b_arch, self.b_show):
             row.addWidget(w)
         row.addStretch(1)
         row.addWidget(self.b_open)
@@ -145,6 +147,7 @@ class ProjectsPanel(QWidget):
         self.b_ren.clicked.connect(self._rename)
         self.b_del.clicked.connect(self._delete)
         self.b_show.clicked.connect(self._show)
+        self.b_arch.clicked.connect(self._archive)
         self.list.itemDoubleClicked.connect(lambda it: self._open_item(it))
         self.list.currentItemChanged.connect(lambda *_: self._update_buttons())
         self._fill()
@@ -212,7 +215,9 @@ class ProjectsPanel(QWidget):
         name = os.path.splitext(os.path.basename(p))[0]
         is_open = self.current and os.path.abspath(p) == self.current
         warn = f"\n⚠ {missing} file non trovati (disco scollegato?)" if missing else ""
-        it = QListWidgetItem(f"{name}{'  (aperto)' if is_open else ''}\n{info}\nmodificato il {when}{warn}")
+        arch = self.cfg.get("archived", {}).get(os.path.abspath(p))
+        tag = f"\n📦 archiviato il {arch['date']} in {arch['path']}" if arch else ""
+        it = QListWidgetItem(f"{name}{'  (aperto)' if is_open else ''}\n{info}\nmodificato il {when}{warn}{tag}")
         it.setData(Qt.UserRole, p)
         it.setToolTip(p)
         it.setIcon(QIcon(_logo_pixmap()))   # in ogni progetto il logo di Moviola, non un fotogramma
@@ -228,7 +233,7 @@ class ProjectsPanel(QWidget):
     def _update_buttons(self):
         p = self._sel_path()
         is_open = bool(p) and self.current == os.path.abspath(p)
-        for b in (self.b_open, self.b_dup, self.b_show):
+        for b in (self.b_open, self.b_dup, self.b_show, self.b_arch):
             b.setEnabled(bool(p))
         for b in (self.b_ren, self.b_del):
             b.setEnabled(bool(p) and not is_open)
@@ -324,6 +329,23 @@ class ProjectsPanel(QWidget):
         self.cfg["recent"] = [r for r in self.cfg.get("recent", []) if os.path.abspath(r) != os.path.abspath(p)]
         self.changed.emit()
         self._fill()
+
+    def _archive(self):
+        import time
+
+        from .archive_dialog import ArchiveDialog
+        p = self._sel_path()
+        if not p:
+            return
+        dlg = ArchiveDialog(p, self.current == os.path.abspath(p), self)
+        if dlg.exec() and dlg.result_path:
+            self.cfg.setdefault("archived", {})[os.path.abspath(p)] = {
+                "path": dlg.result_path, "date": time.strftime("%d/%m/%Y")}
+            self.changed.emit()
+            self._fill(select=p)
+            QMessageBox.information(self, "Archivia", "Archivio creato:\n" + dlg.result_path)
+            from .export_page import _reveal
+            _reveal(dlg.result_path)
 
     def _show(self):
         p = self._sel_path()

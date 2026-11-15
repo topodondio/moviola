@@ -1,5 +1,5 @@
 """Test del motore (senza interfaccia). Esegui: python -m tests.test_core"""
-import os, subprocess, sys, tempfile, json
+import os, subprocess, sys, tempfile, json, threading
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from moviola import project as P, color, audio, media, export, paths
@@ -613,6 +613,55 @@ def test_export_options(tmp):
     print("opzioni di esportazione ok")
 
 
+def test_archive(tmp):
+    """Archivio del progetto: cartella autonoma con percorsi relativi."""
+    import shutil
+    from moviola import archive
+    ff = paths.ffmpeg_exe()
+    src_dir = os.path.join(tmp, "dischi", "SSD"); os.makedirs(src_dir)
+    files = []
+    for n in range(3):
+        f = os.path.join(src_dir, f"c{n}.mp4")
+        subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c=red:s=160x90:r=25:d=1",
+                        "-pix_fmt", "yuv420p", f], check=True)
+        files.append(f)
+    pr = P.Project()
+    for f in files:
+        pr.add_source(f, info(1))
+    pr.add_subclip("clip1", 0, 1); pr.append_to_timeline(["clip1.1"])          # solo clip1 è in timeline
+    proj_dir = os.path.join(tmp, "progetti"); os.makedirs(proj_dir)
+    ppath = os.path.join(proj_dir, "Neve.moviola"); pr.save(ppath)
+    dest = os.path.join(tmp, "archivi"); os.makedirs(dest)
+    pl = archive.plan(ppath, "used"); assert sum(1 for e in pl["items"] if e["copy"]) == 1
+    assert sum(1 for e in archive.plan(ppath, "all")["items"] if e["copy"]) == 3
+    assert archive.plan(ppath, "project")["bytes"] == 0
+    seen = []
+    out = archive.run(ppath, dest, "used", progress=seen.append)
+    assert os.path.isdir(out) and seen and seen[-1] == 1.0
+    assert sorted(os.listdir(os.path.join(out, "media"))) == ["clip1_c0.mp4"], os.listdir(out)
+    for f in ("Neve.moviola", "elenco-file.txt", "LEGGIMI.txt"):
+        assert os.path.exists(os.path.join(out, f)), f
+    # spostando l'archivio altrove si riapre da solo
+    moved = os.path.join(tmp, "altro_disco"); shutil.move(out, moved)
+    shutil.rmtree(os.path.join(tmp, "dischi"))                                  # spariscono gli originali
+    chk = P.Project.load(os.path.join(moved, "Neve.moviola"))
+    s1 = chk.source("clip1"); assert os.path.exists(s1["path"]) and s1["path"].startswith(moved), s1["path"]
+    assert chk.data["archive"]["mode"] == "used" and chk.source("clip1")["name"] == "c0.mp4"
+    assert not os.path.exists(chk.source("clip2")["path"])                      # non copiata: resta dov'era
+    # solo progetto + zip
+    out2 = archive.run(ppath, dest, "project", make_zip=True)
+    assert out2.endswith(".zip") and os.path.isfile(out2) and not os.path.exists(out2[:-4])
+    import zipfile
+    assert any(n.endswith("Neve.moviola") for n in zipfile.ZipFile(out2).namelist())
+    # annullamento: nessuna cartella a metà
+    ev = threading.Event(); ev.set()
+    try:
+        archive.run(ppath, dest, "project", cancel=ev); raised = False
+    except Exception:
+        raised = True
+    print("archivio ok")
+
+
 def test_orient(tmp):
     """Specchio e rotazione (fissa e animata): anteprima ed esportazione concordano."""
     from moviola import orient
@@ -706,6 +755,7 @@ def main():
         test_bins(t)
         test_audio_clean(t)
         test_export_options(t)
+        test_archive(t)
         test_orient(t)
         test_reverse(t)
         test_speed_keep_length()
