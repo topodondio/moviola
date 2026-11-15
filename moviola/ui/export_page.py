@@ -18,7 +18,8 @@ from .. import export
 from .text_render import render_png
 
 MODES = ("all", "range", "selection", "custom", "chapters")
-QUALITIES = (("Alta", "alta"), ("Buona", "buona"), ("Leggera (file piccolo)", "leggera"))
+QUALITIES = (("Alta", "alta"), ("Buona", "buona"), ("Leggera (file piccolo)", "leggera"),
+             ("Bitrate a scelta", "bitrate"))
 FPS_CHOICES = (24, 25, 30, 50, 60)
 
 
@@ -35,7 +36,12 @@ def _card(title):
     return gb, lay
 
 
+def _fmt_size(n):
+    return "meno di 1 MB" if n < 1e6 else f"{n / 1e6:.0f} MB" if n < 1e9 else f"{n / 1e9:.2f} GB"
+
+
 class ExportPage(QWidget):
+    hw_ready = Signal(object)
     progress = Signal(float)
     finished_job = Signal(object)
 
@@ -163,8 +169,27 @@ class ExportPage(QWidget):
         self.quality = QComboBox()
         for lab, k in QUALITIES:
             self.quality.addItem(lab, k)
+        self.encoder = QComboBox()
+        self.encoder.addItem("Processore (x264, il più compatibile)", "libx264")
+        self.encoder.setToolTip("Con l'acceleratore della scheda video la codifica è molto più veloce, "
+                                "ma a parità di qualità il file viene un po' più grande")
+        self.speed = QComboBox()
+        for lab, k in export.ENCODE_SPEEDS:
+            self.speed.addItem(lab, k)
+        self.speed.setToolTip("Veloce: esportazione rapida, file un po' più grande. Compatta: più lenta, "
+                              "file più piccolo a parità di qualità")
+        self.bitrate = QDoubleSpinBox()
+        self.bitrate.setDecimals(1)
+        self.bitrate.setRange(0.2, 400.0)
+        self.bitrate.setSingleStep(0.5)
+        self.bitrate.setSuffix(" Mbit/s")
+        self.bitrate.setKeyboardTracking(False)
+        self.bitrate.setToolTip("Con la qualità «Bitrate a scelta» lo imposti tu; altrimenti mostra la stima. "
+                                "Più è alto, più il file è grande e fedele.")
         rows = (("Formato", self.fmt), ("Dimensione", size_row), ("Se la proporzione cambia", self.fit),
-                ("Fotogrammi al secondo", self.fps), ("Qualità", self.quality))
+                ("Fotogrammi al secondo", self.fps), ("Codifica", self.encoder),
+                ("Velocità di codifica", self.speed), ("Qualità", self.quality),
+                ("Bitrate video", self.bitrate))
         for n, (lab, w) in enumerate(rows):
             g.addWidget(QLabel(lab), n, 0)
             if isinstance(w, QHBoxLayout):
@@ -239,8 +264,11 @@ class ExportPage(QWidget):
         self.chap_list.itemChanged.connect(lambda _i: self._refresh_summary())
         for sp in (self.t_from, self.t_to, self.w, self.h):
             sp.valueChanged.connect(lambda _v, s=sp: self._edited(s))
-        for cb in (self.fmt, self.fit, self.fps, self.quality):
+        for cb in (self.fmt, self.fit, self.fps, self.quality, self.encoder, self.speed):
             cb.currentIndexChanged.connect(lambda _i, c=cb: self._edited(c))
+        self.bitrate.valueChanged.connect(self._bitrate_edited)
+        self.hw_ready.connect(self._fill_hw)
+        threading.Thread(target=lambda: self.hw_ready.emit(export.hw_encoders()), daemon=True).start()
         self.name.textChanged.connect(lambda _t: self._refresh_summary())
         self.folder.textChanged.connect(lambda _t: self._refresh_summary())
         self.add_suffix.toggled.connect(lambda _t: self._refresh_summary())
@@ -378,7 +406,7 @@ class ExportPage(QWidget):
         i = self.fit.findData(bool(p["fill"]))
         self.fit.setCurrentIndex(max(0, i))
         self.preset_note.setText(p.get("note", ""))
-        self.quality.setEnabled(p["fmt"] == "mp4_h264")
+        self._sync_codec_widgets()
         self._loading = was
 
     def _preset_changed(self):
@@ -394,18 +422,69 @@ class ExportPage(QWidget):
             self.host.cfg["export_preset"] = key
         self._refresh_summary()
 
+    def _fill_hw(self, found):
+        """Arrivano i codificatori hardware che funzionano su questo computer."""
+        cfg = self.host.cfg
+        self.encoder.blockSignals(True)
+        while self.encoder.count() > 1:
+            self.encoder.removeItem(1)
+        for key, label in found:
+            self.encoder.addItem(f"{label} · veloce", key)
+        i = self.encoder.findData(cfg.get("export_encoder", "libx264"))
+        self.encoder.setCurrentIndex(max(0, i))
+        self.encoder.blockSignals(False)
+        j = self.speed.findData(cfg.get("export_speed", export.DEFAULT_SPEED))
+        self.speed.setCurrentIndex(max(0, j))
+        self._sync_codec_widgets()
+        self._refresh_summary()
+
+    def _bitrate_edited(self, _v):
+        if self._loading:
+            return
+        if self.quality.currentData() != "bitrate":
+            self._loading = True
+            self.quality.setCurrentIndex(self.quality.findData("bitrate"))
+            self._loading = False
+            self._edited(self.quality)
+            return
+        self._edited(self.bitrate)
+
+    def _sync_codec_widgets(self):
+        prores = self.fmt.currentData() != "mp4_h264"
+        hw = self.encoder.currentData() != "libx264"
+        self.encoder.setEnabled(not prores)
+        self.speed.setEnabled(not prores and not hw)
+        self.quality.setEnabled(not prores)
+        self.bitrate.setEnabled(not prores and self.quality.currentData() == "bitrate")
+
+    def _video_kbps(self):
+        """(bitrate video in kbit/s, è stimato?) con le impostazioni attuali."""
+        fmt = self.fmt.currentData() or "mp4_h264"
+        w, h = self.w.value(), self.h.value()
+        fps = self.fps.currentData() or self.project.fps
+        q = self.quality.currentData()
+        if fmt == "mp4_h264" and q == "bitrate":
+            return self.bitrate.value() * 1000.0, False
+        est = export.estimate_video_kbps(fmt, q if q in export.QUALITY else "buona", w, h, fps)
+        if fmt == "mp4_h264" and self.encoder.currentData() != "libx264":
+            est *= 1.25            # l'hardware comprime un po' meno bene
+        return est, True
+
     def _edited(self, _widget):
         """Una modifica a mano passa il modello a «Personalizzato»."""
         if self._loading:
             return
-        if self.preset.currentData() != "custom" and _widget in (self.w, self.h, self.fmt, self.fit, self.fps,
-                                                                   self.quality):
+        if _widget in (self.encoder, self.speed):
+            self.host.cfg["export_encoder"] = self.encoder.currentData()
+            self.host.cfg["export_speed"] = self.speed.currentData()
+        elif self.preset.currentData() != "custom" and _widget in (self.w, self.h, self.fmt, self.fit, self.fps,
+                                                                     self.quality, self.bitrate):
             i = self.preset.findData("custom")
             self._loading = True
             self.preset.setCurrentIndex(i)
             self._loading = False
             self.preset_note.setText("Impostazioni scelte a mano.")
-        self.quality.setEnabled(self.fmt.currentData() == "mp4_h264")
+        self._sync_codec_widgets()
         self._refresh_summary()
 
     def _pick_folder(self):
@@ -483,8 +562,24 @@ class ExportPage(QWidget):
         if abs(w / max(h, 1) - pw / max(ph, 1)) > 0.01:
             ratio = (" · <span style='color:#e8a33d'>proporzione diversa dal progetto: " +
                      ("l'immagine riempie il fotogramma" if self.fit.currentData() else "bande nere") + "</span>")
+        kbps, estimated = self._video_kbps()
+        fmt_key = self.fmt.currentData() or "mp4_h264"
+        if estimated:      # senza scelta a mano il campo mostra il valore stimato
+            self.bitrate.blockSignals(True)
+            self.bitrate.setValue(round(kbps / 1000.0, 1))
+            self.bitrate.blockSignals(False)
+        size = export.estimate_size_bytes(fmt_key, kbps, total)
+        hw = self.encoder.currentData() != "libx264" and fmt_key == "mp4_h264"
+        enc = "acceleratore hardware" if hw else \
+            f"x264 {self.speed.currentText().split(' ')[0].lower()}" if fmt_key == "mp4_h264" else "ProRes 422"
         self.summary.setText(f"<b>{mode}</b><br>Durata {_fmt_time(total)}"
-                             f"{' (in totale)' if len(tg) > 1 else ''}<br>{w}×{h} · {fps:g} fps<br>{fmt}{ratio}")
+                             f"{' (in totale)' if len(tg) > 1 else ''}<br>{w}×{h} · {fps:g} fps<br>{fmt}"
+                             f"<br>Codifica: {enc}<br>Bitrate video: "
+                             f"{'circa ' if estimated else ''}{kbps / 1000:.1f} Mbit/s"
+                             f"<br><b>Dimensione {'stimata' if estimated else 'prevista'}: circa "
+                             f"{_fmt_size(size)}</b>{ratio}"
+                             f"<br><span style='color:#808080; font-size:11px;'>La stima varia con il contenuto: "
+                             f"scene ferme pesano meno, scene mosse di più.</span>")
         names = [os.path.basename(p) for p, _a, _b in tg]
         shown = "\n".join(names[:8]) + (f"\n… e altri {len(names) - 8}" if len(names) > 8 else "")
         self.files.setText(("File:\n" if len(names) > 1 else "File: ") + shown)
@@ -519,8 +614,15 @@ class ExportPage(QWidget):
             return
         self.host.engine.stop()
         snap = copy.deepcopy(pr)           # si può continuare a montare: l'esportazione usa questa copia
-        opts = dict(fmt=self.fmt.currentData(), quality=self.quality.currentData(), size=(self.w.value(), self.h.value()),
-                    fps=self.fps.currentData(), fill=bool(self.fit.currentData()))
+        fmt = self.fmt.currentData()
+        enc = self.encoder.currentData() if fmt == "mp4_h264" else "libx264"
+        kbps, _est = self._video_kbps()
+        qual = self.quality.currentData()
+        opts = dict(fmt=fmt, quality=qual if qual in export.QUALITY else "buona",
+                    size=(self.w.value(), self.h.value()), fps=self.fps.currentData(),
+                    fill=bool(self.fit.currentData()), encoder=enc, speed=self.speed.currentData())
+        if fmt == "mp4_h264" and (qual == "bitrate" or enc != "libx264"):
+            opts["bitrate_kbps"] = kbps
         store = self.host.store
         renderer = render_png
         self._running = True

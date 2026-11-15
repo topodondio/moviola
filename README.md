@@ -420,6 +420,20 @@ piccolo o la timeline. **Maiusc+← / →** salta di un secondo.
 
 Tutte le scorciatoie: menu Aiuto → Scorciatoie (F1).
 
+## Esportazione più veloce e informazioni sul file
+
+- Nella scheda ESPORTAZIONE, sotto il riepilogo, vedi **bitrate** e **dimensione stimata** del
+  file (o la somma dei file, se esporti per capitoli). Con la qualità **Bitrate a scelta**
+  scrivi tu i Mbit/s e la stima si aggiorna; con le altre qualità il campo mostra il valore
+  previsto. La stima dipende dal contenuto, quindi è indicativa (scene ferme pesano meno).
+- **Velocità di codifica**: *Veloce* (predefinita) dimezza quasi i tempi rispetto a prima, con un
+  file di dimensione simile; *Equilibrata* e *Compatta* sono più lente e un po' più piccole.
+- **Codifica**: se il computer ha un acceleratore (VideoToolbox sul Mac, NVENC/Quick Sync/AMF su
+  Windows) compare come scelta aggiuntiva: è molto più veloce ma il file è un po' più grande a
+  parità di qualità. Le scelte vengono provate all'avvio, quindi compaiono solo se funzionano.
+- I pezzi che riempiono tutto il fotogramma non passano più dalla sovrapposizione sullo sfondo
+  nero (stesso risultato, meno lavoro).
+
 ## Archiviare un progetto
 
 In **ARCHIVIO PROGETTI** seleziona un progetto e clicca **Archivia…**. Scegli cosa mettere nella cartella:

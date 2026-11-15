@@ -10,6 +10,7 @@ import math
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 
@@ -22,6 +23,88 @@ FORMATS = {
     "mov_prores": {"label": "MOV · ProRes 422 (alta qualità)", "ext": ".mov"},
 }
 QUALITY = {"alta": 17, "buona": 20, "leggera": 24}
+# velocità di codifica: la x264 più veloce fa file un poco più grandi a parità di qualità
+ENCODE_SPEEDS = (("Veloce", "veryfast"), ("Equilibrata", "fast"), ("Compatta (più lenta)", "medium"))
+DEFAULT_SPEED = "veryfast"
+AUDIO_KBPS = 192
+# codificatori della scheda video / del processore, per piattaforma (si provano prima di offrirli)
+HW_CANDIDATES = {
+    "darwin": [("h264_videotoolbox", "Acceleratore del Mac (VideoToolbox)")],
+    "win32": [("h264_nvenc", "Scheda video NVIDIA (NVENC)"), ("h264_qsv", "Intel Quick Sync"),
+              ("h264_amf", "Scheda video AMD (AMF)")],
+    "linux": [("h264_nvenc", "Scheda video NVIDIA (NVENC)"), ("h264_qsv", "Intel Quick Sync")],
+}
+_HW_CACHE: list | None = None
+_HW_LOCK = threading.Lock()
+
+
+def estimate_video_kbps(fmt, quality, W, H, fps):
+    """Bitrate video medio previsto (kbit/s). È una stima: dipende molto dal contenuto
+    (un'inquadratura ferma pesa poco, una scena molto mossa molto di più)."""
+    px = max(1, W * H) * float(fps)
+    if fmt == "mov_prores":
+        return 147000.0 * px / (1920 * 1080 * 25)          # ProRes 422: ~147 Mbit/s a 1080p25
+    crf = QUALITY.get(quality, 20)
+    bpp = 0.072 * 2 ** ((23 - crf) / 6)                      # ogni 6 punti di CRF il flusso raddoppia
+    return max(150.0, px * bpp / 1000.0)
+
+
+def estimate_size_bytes(fmt, video_kbps, duration):
+    audio = 1536.0 if fmt == "mov_prores" else AUDIO_KBPS    # ProRes: audio non compresso
+    return (video_kbps + audio) * 1000.0 / 8.0 * max(0.0, duration)
+
+
+def video_args(encoder="libx264", speed=DEFAULT_SPEED, quality="alta", bitrate_kbps=None):
+    """Opzioni FFmpeg del codificatore video H.264."""
+    if encoder == "libx264":
+        a = ["-c:v", "libx264", "-preset", speed]
+        if bitrate_kbps:
+            k = int(bitrate_kbps)
+            return a + ["-b:v", f"{k}k", "-maxrate", f"{int(k * 1.6)}k", "-bufsize", f"{k * 3}k"]
+        return a + ["-crf", str(QUALITY.get(quality, 18))]
+    k = int(bitrate_kbps or 8000)
+    rate = ["-b:v", f"{k}k", "-maxrate", f"{int(k * 1.5)}k", "-bufsize", f"{k * 2}k"]
+    if encoder == "h264_videotoolbox":
+        return ["-c:v", encoder, "-profile:v", "high"] + rate
+    if encoder == "h264_nvenc":
+        return ["-c:v", encoder, "-preset", "p5", "-rc", "vbr"] + rate
+    if encoder == "h264_qsv":
+        return ["-c:v", encoder, "-preset", "medium"] + rate
+    if encoder == "h264_amf":
+        return ["-c:v", encoder, "-quality", "balanced"] + rate
+    return ["-c:v", encoder] + rate
+
+
+def hw_encoders(force=False):
+    """[(chiave, nome)] dei codificatori hardware che funzionano davvero su questo computer
+    (si prova una codifica minuscola: compilato in FFmpeg non vuol dire disponibile)."""
+    global _HW_CACHE
+    with _HW_LOCK:
+        if _HW_CACHE is not None and not force:
+            return list(_HW_CACHE)
+        out = []
+        exe = paths.ffmpeg_exe()
+        plat = "darwin" if sys.platform == "darwin" else "win32" if sys.platform.startswith("win") else "linux"
+        if exe:
+            try:
+                listed = subprocess.run([exe, "-hide_banner", "-encoders"], capture_output=True, text=True,
+                                        timeout=15, **paths.no_window()).stdout
+            except Exception:  # noqa: BLE001
+                listed = ""
+            for key, label in HW_CANDIDATES.get(plat, []):
+                if key not in listed:
+                    continue
+                cmd = [exe, "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=640x360:r=25:d=0.3",
+                       "-pix_fmt", "yuv420p"] + video_args(key, bitrate_kbps=2000) + ["-f", "null", "-"]
+                try:
+                    r = subprocess.run(cmd, capture_output=True, timeout=20, **paths.no_window())
+                    if r.returncode == 0:
+                        out.append((key, label))
+                except Exception:  # noqa: BLE001
+                    pass
+        _HW_CACHE = out
+        return list(out)
+
 
 # Modelli di esportazione. size: ("fisso", L, A) oppure ("altezza", A) = quell'altezza con
 # la proporzione del progetto, oppure None = come il progetto. fill: il formato è diverso da
@@ -145,7 +228,8 @@ def _retime_expr(it, src_t, cs):
 
 
 def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=None, start=0.0, end=None,
-              text_renderer=None, size=None, fps=None, fill=False):
+              text_renderer=None, size=None, fps=None, fill=False, encoder="libx264", speed=DEFAULT_SPEED,
+              bitrate_kbps=None):
     """Prepara LUT, scritte, mix audio e comando FFmpeg. Restituisce (cmd, workdir, durata).
 
     text_renderer(item, W, H, path) disegna una scritta in un PNG trasparente
@@ -302,8 +386,12 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
             chains.append(f"[pb{label}]{lut_filter(key_b, gb)}[lb{label}]")
             chains.append(f"[la{label}][lb{label}]blend=all_expr='A+(B-A)*clip((T-{off:.6f})/{max(dur, 1e-6):.6f}\\,0\\,1)',"
                           f"format=rgb24,{tail}")
-        chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={lead + dur + 0.2:.6f},format=rgb24[b{label}]")
-        f = f"[b{label}][c{label}]overlay=x={x:.2f}:y={y:.2f}:eof_action=repeat:format=rgb"
+        if w1 == W and h1 == H and abs(x) < 0.5 and abs(y) < 0.5:
+            # il pezzo riempie già tutto il fotogramma: niente da sovrapporre allo sfondo nero
+            f = f"[c{label}]null"
+        else:
+            chains.append(f"color=c=black:s={W}x{H}:r={fps:g}:d={lead + dur + 0.2:.6f},format=rgb24[b{label}]")
+            f = f"[b{label}][c{label}]overlay=x={x:.2f}:y={y:.2f}:eof_action=repeat:format=rgb"
         if fi > 0 and lead < fi:
             col = "white" if it.get("fade_in_color") == "white" else "black"
             f += f",fade=t=in:st={-cs:.6f}:d={fi:.6f}:color={col}"
@@ -424,8 +512,8 @@ def build_job(project, store, out_path, fmt="mp4_h264", quality="alta", workdir=
     if fmt == "mov_prores":
         cmd += ["-c:v", "prores_ks", "-profile:v", "2", "-c:a", "pcm_s16le"]
     else:
-        cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", str(QUALITY.get(quality, 18)),
-                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
+        cmd += video_args(encoder, speed, quality, bitrate_kbps)
+        cmd += ["-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k", "-movflags", "+faststart"]
     cmd += ["-t", f"{end - start:.6f}", os.path.abspath(out_path)]
     return cmd, workdir, end - start
 

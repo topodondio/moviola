@@ -613,6 +613,30 @@ def test_export_options(tmp):
     print("opzioni di esportazione ok")
 
 
+def test_export_speed(tmp):
+    """Stima del file, bitrate scelto, preset veloce, sovrapposizione saltata a pieno fotogramma."""
+    assert export.video_args("libx264", "veryfast", "alta") == ["-c:v", "libx264", "-preset", "veryfast", "-crf", "17"]
+    assert "-b:v" in export.video_args("libx264", "fast", "alta", 4000) and "-crf" not in export.video_args(
+        "libx264", "fast", "alta", 4000)
+    assert "h264_videotoolbox" in export.video_args("h264_videotoolbox", bitrate_kbps=6000)
+    k = export.estimate_video_kbps("mp4_h264", "buona", 1920, 1080, 25)
+    assert 2000 < k < 12000 and export.estimate_video_kbps("mp4_h264", "alta", 1920, 1080, 25) > k
+    assert export.estimate_video_kbps("mp4_h264", "buona", 1080, 1920, 25) == k      # stesso numero di pixel
+    assert abs(export.estimate_size_bytes("mp4_h264", 4000, 10) - (4000 + 192) * 1000 / 8 * 10) < 1
+    a = os.path.join(tmp, "v.mp4"); make_clip(a, 4, "red", 440)
+    pr = P.Project(); store = audio.AudioStore()
+    s = pr.add_source(a, info(4)); store.register(s["id"], media.make_audio_cache(a))
+    pr.add_subclip("clip1", 0, 3); pr.append_to_timeline(["clip1.1"])
+    out = os.path.join(tmp, "br.mp4")
+    cmd, wd, dur = export.build_job(pr, store, out, bitrate_kbps=1500, speed="veryfast")
+    assert "veryfast" in cmd and "1500k" in cmd
+    assert "overlay" not in open(os.path.join(wd, "filtri.txt")).read()    # pezzo a pieno fotogramma
+    err = export.run_job(cmd, wd, dur); assert err is None, err
+    sz = os.path.getsize(out) * 8 / dur / 1000
+    assert 600 < sz < 2600, sz                                           # vicino al bitrate chiesto (+ audio)
+    print("esportazione veloce ok")
+
+
 def test_guides(tmp):
     from PySide6.QtCore import QRectF
     from moviola.ui import guides as G
@@ -781,6 +805,7 @@ def main():
         test_bins(t)
         test_audio_clean(t)
         test_export_options(t)
+        test_export_speed(t)
         test_guides(t)
         test_marker_kinds(t)
         test_archive(t)
