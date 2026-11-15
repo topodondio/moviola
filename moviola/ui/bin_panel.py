@@ -374,6 +374,7 @@ class BinPanel(QWidget):
         for t in self.trees:
             t.clear()
         self._items.clear()
+        self._moved = {}
         self._audio_ids = set()
         # prima le clip video, poi musica e suoni
         ordered = [x for x in project.sources if x.get("has_video")] + \
@@ -508,6 +509,7 @@ class BinPanel(QWidget):
         meta = getattr(self, "_meta", {})
 
         want = self._tag_sel
+        self._restore_moved()
 
         def ok(rid):
             tag, used, parent = meta.get(rid, (None, False, None))
@@ -523,6 +525,8 @@ class BinPanel(QWidget):
         for rid, it in self._items.items():
             if meta.get(rid, (None, False, None))[2] is not None:
                 it.setHidden(not ok(rid))
+        if want:
+            self._lift_matching_parts(meta, ok)
         for rid, it in self._items.items():
             if str(rid).startswith(FOLDER):
                 continue
@@ -550,6 +554,53 @@ class BinPanel(QWidget):
             top = self.tree.topLevelItem(k)
             if str(top.data(0, Qt.UserRole)).startswith(USERBIN):
                 hide_empty_bins(top)
+
+    def _restore_moved(self):
+        """Rimette le parti tirate fuori dal filtro dentro alla loro clip."""
+        moved = getattr(self, "_moved", {})
+        if not moved:
+            return
+        keep = self.selected_ids()
+        was, self._block = self._block, True
+        by_mother = {}
+        for sid, (mother_id, idx) in moved.items():
+            by_mother.setdefault(mother_id, []).append((idx, sid))
+        for mother_id, lst in by_mother.items():
+            mother = self._items.get(mother_id)
+            for idx, sid in sorted(lst):
+                it = self._items.get(sid)
+                if it is None or mother is None:
+                    continue
+                par = it.parent() or it.treeWidget().invisibleRootItem()
+                par.takeChild(par.indexOfChild(it))
+                mother.insertChild(min(idx, mother.childCount()), it)
+        self._moved = {}
+        for k in keep:
+            if k in self._items:
+                self._items[k].setSelected(True)
+        self._block = was
+
+    def _lift_matching_parts(self, meta, ok):
+        """Con un filtro per colore: una parte che passa il filtro ma la cui clip
+        no, si mostra da sola, senza la clip «madre»."""
+        keep = self.selected_ids()
+        was, self._block = self._block, True
+        self._moved = {}
+        for rid, it in list(self._items.items()):
+            mother_id = meta.get(rid, (None, False, None))[2]
+            if mother_id is None or it.isHidden():
+                continue
+            mother = self._items.get(mother_id)
+            if mother is None or ok(mother_id):
+                continue
+            cont = mother.parent() or mother.treeWidget().invisibleRootItem()
+            self._moved[rid] = (mother_id, mother.indexOfChild(it))
+            mother.takeChild(mother.indexOfChild(it))
+            cont.insertChild(cont.indexOfChild(mother) + 1, it)
+        for k in keep:
+            if k in self._items:
+                self._items[k].setSelected(True)
+        self._block = was
 
     def update_subclip(self, sub):
         it = self._items.get(sub["id"])

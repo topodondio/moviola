@@ -1256,9 +1256,11 @@ class TimelinePanel(QWidget):
         self.btn_box.setIcon(icons.icon("box", 16))
         self.btn_box.setToolTip("Aggiungi un riquadro colorato alla testina (R): sfondo per le scritte,\n"
                                 "fascia, schermo pieno colorato…")
-        for b in (self.btn_split, self.btn_snap, self.btn_ripple, self.btn_slip, self.btn_fit, self.btn_text, self.btn_box):
+        for b in (self.btn_split, self.btn_snap, self.btn_ripple, self.btn_slip, self.btn_text, self.btn_box):
             bar.addWidget(b)
         bar.addStretch(1)
+        self.btn_fit.setToolTip("Mostra tutta la timeline (Maiusc+Z)")
+        bar.addWidget(self.btn_fit)
         self.zoom_label = QLabel("Zoom")
         bar.addWidget(self.zoom_label)
         self.zoom = QSlider(Qt.Horizontal)
