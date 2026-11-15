@@ -196,9 +196,11 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
         if src:
             self.src_name.setText(f"{self.selected_ref}  ·  {src.get('label') or src['name']}")
             self.src_name.setToolTip(src["path"])
+            self.src_info.setText(self._specs(src))
             self.src_dur.setText(f"/ {tc(src['duration'], src['fps'])}")
         else:
             self.src_name.setText("Seleziona una clip nella lista")
+            self.src_info.setText("")
             self.src_dur.setText("")
         self.dur_label.setText(f"/ {tc(self.project.timeline_end(), self.project.fps)}")
 

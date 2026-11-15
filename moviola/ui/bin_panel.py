@@ -634,7 +634,7 @@ class BinPanel(QWidget):
         if rid.startswith(USERBIN):
             self.request.emit("rename_bin:" + rid[len(USERBIN):], [])
         elif not rid.startswith(FOLDER):
-            self.request.emit("append", [rid])
+            self.request.emit("open", [rid])
 
     def _remember_open(self, it, state):
         if self._block:

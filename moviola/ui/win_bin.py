@@ -8,6 +8,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QFileDialog, QInputDialog, QMessageBox)
 
+from .common import PAGE_CLIP
 from .. import color
 from .timeline import tc
 
@@ -308,6 +309,15 @@ class BinMixin:
             return self.import_folder_dialog()
         if action == "import_audio":
             return self.import_audio_dialog()
+        if action == "open":
+            # doppio clic: nella scheda Clip la clip resta nel monitor anche se il mouse
+            # esce dalla riga (finché non si fa doppio clic su un'altra); nel montaggio accoda
+            if self.page == PAGE_CLIP:
+                self.bin.select(ids)
+                self.show_ref(ids[0])
+                self._hover_back = None
+                return
+            action = "append"
         if action == "append":
             self.bin.select(ids)
             return self.append_selected()

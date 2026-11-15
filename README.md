@@ -274,6 +274,13 @@ anteprima e in esportazione.
   collegato, usa per il momento una cache temporanea sul computer. La cache
   sul disco esterno vale anche dal PC.
 
+### Scheda Clip: doppio clic e caratteristiche
+
+Passando il mouse sulle clip il monitor le mostra in anteprima; con un
+**doppio clic** la clip resta nel monitor anche quando il mouse esce dalla
+riga, finché non fai doppio clic su un'altra. Sotto il nome compaiono
+dimensione, fps e codec. (Nel Montaggio il doppio clic accoda la clip.)
+
 ### Salvataggio automatico e copie di sicurezza
 
 Ogni minuto, se ci sono modifiche, Moviola salva una copia automatica.
