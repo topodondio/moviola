@@ -132,7 +132,34 @@ class BuildMixin:
         tr.addStretch(1)
         self.guides_btn = self._build_guides_button()
         tr.addWidget(self.guides_btn)
-        tl.addLayout(tr)
+        tv.addLayout(tr)                    # comandi della timeline: sotto il monitor TIMELINE
+        # comandi delle clip: sotto il monitor CLIP, agiscono solo sulla clip
+        cr = QHBoxLayout()
+        cr.setSpacing(4)
+
+        def cb(text, tip, slot, width=None):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.clicked.connect(slot)
+            if width:
+                b.setFixedWidth(width)
+            cr.addWidget(b)
+            return b
+
+        cb("⏮", "Inizio della clip", lambda: self._src(lambda: self.engine.seek(0)))
+        cb("◀◀", "Indietro", lambda: self._src(lambda: self.engine.shuttle(-1)))
+        cb("−1 f", "Un fotogramma indietro (←)", lambda: self._src(lambda: self.engine.step(-1)))
+        self.mon_play_btn = cb("▶", "Play / pausa (Spazio)", lambda: self._src(self.engine.toggle), 46)
+        cb("+1 f", "Un fotogramma avanti (→)", lambda: self._src(lambda: self.engine.step(1)))
+        cb("▶▶", "Avanti veloce (L)", lambda: self._src(lambda: self.engine.shuttle(1)))
+        cb("⏭", "Fine della clip", lambda: self._src(lambda: self.engine.seek(self.engine.duration())))
+        cr.addSpacing(10)
+        self.mon_tc = QLabel("00:00:00:00")
+        self.mon_tc.setObjectName("timecode")
+        cr.addWidget(self.mon_tc)
+        cr.addStretch(1)
+        mv.addLayout(cr)
         self.src_panel = self._build_source_panel()
         self._make_viewer(self.cfg.get("gpu", True))
 

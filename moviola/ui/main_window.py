@@ -194,6 +194,7 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
         self.play_btn.setText("❚❚" if playing and not src else "▶")
         self.color_page.play_btn.setText("❚❚" if playing and not src else "▶")
         self.src_play_btn.setText("❚❚" if playing and src else "▶")
+        self.mon_play_btn.setText("❚❚" if playing and src else "▶")
 
     def _stretch_toggled(self, on):
         self.cfg["speed_stretch"] = bool(on)
@@ -263,6 +264,7 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
         fps = self.engine.fps()
         if self.engine.mode == "source":
             self.src_tc.setText(tc(t, fps))
+            self.mon_tc.setText(tc(t, fps))
             self.source_bar.set_position(t)
         else:
             self.tc_label.setText(tc(t, fps))

@@ -46,6 +46,12 @@ st._hover_end(); assert abs(w.engine.position - n_pos) < 0.1
 st._clicked(iid, Qt.NoModifier, 0.25)
 assert abs(w.engine.position - (it0["start"] + 0.25 * w.project.item_dur(it0))) < 0.1
 # istogramma aggiornato nella scheda Colore
-w._parade_update(force=True)
+import time as _t
+w.set_page(PAGE_COLOR)
+for _ in range(60):
+    w._parade_update(force=True); app.processEvents(); _t.sleep(0.05)
+    h = w.color_panel.curve.hist
+    if h is not None and h.ndim == 2:
+        break
 assert w.color_panel.curve.hist is not None and w.color_panel.curve.hist.ndim == 2
 print("STRISCIA E ISTOGRAMMA OK")

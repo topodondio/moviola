@@ -562,5 +562,6 @@ maschere/gradiente lineare come in Camera Oscura.
 
 
 ### Comandi sotto i monitor del Montaggio
-Sotto il monitor della timeline (destra) e sotto quello della clip (sinistra): inizio/fine, indietro, **−1 f**,
-play/pausa, **+1 f**, avanti. Spazio, J K L e le frecce agiscono sul monitor che hai usato per ultimo.
+Due righe separate: sotto il monitor **CLIP** (sinistra) i comandi agiscono solo sulla clip, sotto il monitor
+**TIMELINE** (destra) solo sulla timeline. In ognuna: inizio, indietro, **−1 f**, play/pausa, **+1 f**, avanti, fine e
+il timecode. Spazio, J K L e le frecce agiscono sul monitor che hai usato per ultimo.
