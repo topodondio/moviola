@@ -8,6 +8,8 @@ import time
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit
 
+from .shortcuts import combo_text
+
 HOLD_DELAY = 0.25  # secondi prima che parta lo scorrimento continuo
 START_SPEED = 0.5  # volte il tempo reale
 MAX_SPEED = 8.0
@@ -41,14 +43,18 @@ class ArrowScrubber(QObject):
         if et not in (QEvent.KeyPress, QEvent.KeyRelease):
             return False
         key = ev.key()
-        if key not in (Qt.Key_Left, Qt.Key_Right):
+        reg = getattr(self.window, "shortcuts", None)
+        if reg is None or "frame_back" not in reg.entries:
             return False
-        mods = ev.modifiers() & ~Qt.KeypadModifier
-        if mods != Qt.NoModifier or not self.window.isActiveWindow():
+        if et == QEvent.KeyPress:
+            combo = combo_text(ev)
+            d = -1 if combo in reg.keys("frame_back") else 1 if combo in reg.keys("frame_fwd") else 0
+        else:           # al rilascio basta il tasto principale (i modificatori possono essere già stati lasciati)
+            d = -1 if key in reg.main_keys("frame_back") else 1 if key in reg.main_keys("frame_fwd") else 0
+        if not d or not self.window.isActiveWindow():
             return False
         if _typing(QApplication.focusWidget()):
             return False
-        d = -1 if key == Qt.Key_Left else 1
         if et == QEvent.KeyPress:
             if ev.isAutoRepeat():
                 return True  # la ripetizione la gestiamo noi, con l'accelerazione

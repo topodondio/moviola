@@ -69,6 +69,10 @@ class SystemMixin:
         keep = self._project_cache_files()
         self.jobs.submit(paths.enforce_cache_limit, int(limit), keep)
 
+    def customize_shortcuts(self):
+        from .shortcuts import ShortcutsDialog
+        ShortcutsDialog(self.shortcuts, self).exec()
+
     def preferences(self):
         old_root = paths.cache_root()
         d = PreferencesDialog(self.cfg, self._project_cache_files(), self)

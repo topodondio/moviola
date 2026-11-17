@@ -20,6 +20,7 @@ from .viewer import CpuViewer, GlViewer
 
 from .export_page import ExportPage
 from .color_page import ColorPage
+from .shortcuts import Registry
 from .common import (GREEN_TAG, PAGE_CLIP, PAGE_COLOR, PAGE_EXPORT, PAGE_MONTAGE, PAGE_PROJECTS, RED_TAG, TAB_CLIP,
                      TAB_EFFECTS, TAB_QSS, YELLOW_TAG)
 
@@ -114,7 +115,7 @@ class BuildMixin:
             return b
 
         tb("⏮", "Inizio (Home)", lambda: self._tl(lambda: self.engine.seek(0)))
-        tb("◀◀", "Indietro (J)", lambda: self._tl(lambda: self.engine.shuttle(-1)))
+        tb("◀◀", "Indietro", lambda: self._tl(lambda: self.engine.shuttle(-1)))
         self.play_btn = tb("▶", "Play / pausa (Spazio)", lambda: self._tl(self.engine.toggle))
         self.play_btn.setFixedWidth(46)
         tb("▶▶", "Avanti veloce (L)", lambda: self._tl(lambda: self.engine.shuttle(1)))
@@ -489,11 +490,15 @@ class BuildMixin:
     def _build_actions(self):
         mb = self.menuBar()
 
+        self.shortcuts = Registry(self.cfg, self._save_cfg)
+
         def act(menu, text, slot, sc=None, checkable=False, checked=False):
             a = QAction(text, self)
-            if sc:
-                a.setShortcuts([QKeySequence(s) for s in (sc if isinstance(sc, (list, tuple)) else [sc])])
-                a.setShortcutContext(Qt.WindowShortcut)
+            default = list(sc) if isinstance(sc, (list, tuple)) else ([sc] if sc else [])
+            if text.startswith("Moviola "):          # l'indicazione della versione non è un comando
+                a.setShortcuts([QKeySequence(s) for s in default])
+            else:
+                self.shortcuts.register(menu, text, default, a)
             if checkable:
                 a.setCheckable(True)
                 a.setChecked(checked)
@@ -508,6 +513,7 @@ class BuildMixin:
         self.act_open = act(m, "Apri progetto…", self.open_project, "Ctrl+O")
         act(m, "Progetti (gestione)…", self.show_welcome, "Ctrl+Shift+O")
         act(m, "Preferenze (cartella progetti, cache)…", self.preferences)
+        act(m, "Scorciatoie da tastiera personalizzabili…", self.customize_shortcuts)
         act(m, "Copie di sicurezza dei progetti…", lambda: QDesktopServices.openUrl(
             QUrl.fromLocalFile(paths.internal_dir("copie_di_sicurezza"))))
         self.recent_menu = m.addMenu("Apri recente")
@@ -554,8 +560,8 @@ class BuildMixin:
         m = mb.addMenu("Riproduzione")
         act(m, "Play / pausa", self.engine.toggle, "Space")
         act(m, "Indietro (J)", lambda: self.engine.shuttle(-1), "J")
-        act(m, "Stop (K)", lambda: self.engine.shuttle(0), "K")
-        act(m, "Avanti (L)", lambda: self.engine.shuttle(1), "L")
+        act(m, "Stop", lambda: self.engine.shuttle(0), "K")
+        act(m, "Avanti", lambda: self.engine.shuttle(1), "L")
         # ← / → sono gestite a parte (tenendole premute lo scorrimento accelera)
         act(m, "Fotogramma precedente\t←", lambda: self.engine.step(-1))
         act(m, "Fotogramma successivo\t→", lambda: self.engine.step(1))
@@ -665,6 +671,11 @@ class BuildMixin:
         act(m, "Scheda Effetti (velocità, inquadratura, dissolvenze, scritte, riquadri)",
             lambda: self.show_tab(TAB_EFFECTS), "Ctrl+4")
         
+        # tasti che non sono voci di menu: scorrimento con le frecce e lampeggio del riferimento
+        self.shortcuts.register_special("Riproduzione", "Un fotogramma indietro (tenuto premuto: scorre)", ["Left"], "frame_back")
+        self.shortcuts.register_special("Riproduzione", "Un fotogramma avanti (tenuto premuto: scorre)", ["Right"], "frame_fwd")
+        self.shortcuts.register_special("Colore", "Lampeggio: mostra il riferimento (tenuto premuto)", ["Q"], "ref_flash")
+
         m = mb.addMenu("Aiuto")
         act(m, "Scorciatoie da tastiera", self.show_shortcuts, "F1")
         act(m, "Cartella cache (proxy e audio)", lambda: QDesktopServices.openUrl(

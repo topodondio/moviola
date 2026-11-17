@@ -6,7 +6,7 @@ import time
 import uuid
 
 import numpy as np
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt, QTimer
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QInputDialog
 
@@ -211,11 +211,10 @@ class RefsMixin:
         self._parade_update(force=True)
 
     # ------------------------------------------------------------ tastiera
-    FLASH_KEY = Qt.Key_Q
-
     def keyPressEvent(self, e):
-        if e.key() == self.FLASH_KEY and not e.isAutoRepeat() and getattr(self, "page", None) == PAGE_COLOR \
-                and not e.modifiers():
+        reg = getattr(self, "shortcuts", None)
+        if reg is not None and not e.isAutoRepeat() and getattr(self, "page", None) == PAGE_COLOR \
+                and "ref_flash" in reg.entries and reg.matches("ref_flash", e):
             self.ref_flash(True)
             self.color_page.flash_btn.setDown(True)
             e.accept()
@@ -223,7 +222,9 @@ class RefsMixin:
         super().keyPressEvent(e)
 
     def keyReleaseEvent(self, e):
-        if e.key() == self.FLASH_KEY and not e.isAutoRepeat():
+        reg = getattr(self, "shortcuts", None)
+        if reg is not None and not e.isAutoRepeat() and "ref_flash" in reg.entries \
+                and e.key() in reg.main_keys("ref_flash"):
             self.ref_flash(False)
             self.color_page.flash_btn.setDown(False)
             e.accept()

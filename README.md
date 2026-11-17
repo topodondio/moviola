@@ -420,6 +420,13 @@ piccolo o la timeline. **Maiusc+← / →** salta di un secondo.
 
 Tutte le scorciatoie: menu Aiuto → Scorciatoie (F1).
 
+### Scorciatoie personalizzabili
+File → **Scorciatoie da tastiera personalizzabili…** elenca tutti i comandi, raggruppati per menu/scheda (con ricerca). Per ognuno puoi
+impostare un tasto principale e uno alternativo; se il tasto è già usato da un altro comando ti viene chiesto se spostarlo.
+**Ripristina questa** o **Ripristina tutte le predefinite**. Le scelte sono salvate nelle impostazioni del programma e valgono
+su Mac e Windows (Ctrl su Windows = Cmd su Mac). Anche frecce (fotogramma) e lampeggio del riferimento (Q) sono personalizzabili.
+Il taglio alla testina resta su **C**.
+
 ## Esportazione più veloce e informazioni sul file
 
 - Nella scheda ESPORTAZIONE, sotto il riepilogo, vedi **bitrate** e **dimensione stimata** del

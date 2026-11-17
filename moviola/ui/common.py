@@ -40,6 +40,8 @@ Ctrl/Cmd+Maiusc+C / V: copia / incolla regolazioni · \\ : prima / dopo · Doppi
 Ctrl/Cmd+Maiusc+R: fissa il riferimento · W: confronto spento / affiancato / tendina · tieni premuto Q: lampeggio · P: parade RGB<br><br>
 <b>Rimandi tra schede</b><br>
 Tasto destro su pezzi e clip: Apri in Colore · Mostra nella clip · Mostra in Montaggio · doppio clic su un pezzo: apre il Colore · Ctrl/Cmd+[: torna indietro<br><br>
+<b>Personalizza</b><br>
+I tasti qui sotto sono quelli predefiniti: li cambi in File → Scorciatoie da tastiera personalizzabili… (conflitti segnalati, «Ripristina» per una o per tutte)<br><br>
 <b>Progetto</b><br>
 Ctrl/Cmd+Z: annulla · Ctrl/Cmd+Maiusc+Z: ripeti · Ctrl/Cmd+S: salva · Ctrl/Cmd+I: importa · Ctrl/Cmd+E: esporta
 """
