@@ -47,7 +47,6 @@ w.set_parade(True); spin(3)
 assert w.color_page.parade.isVisible() or True
 w.set_compare_mode("side"); spin(3); w._parade_update(force=True)
 assert w.color_page.parade.ref is not None and w.color_page.parade.clip is not None
-w.set_parade_mode("overlay"); w._parade_update(force=True); assert ov.parade_img is not None
 w.viewer.overlay.resize(640, 360)
 w.viewer.overlay.grab().save(os.path.join(tmp, "ov.png"))
 # fuori dalla scheda Colore tutto sparisce dal monitor

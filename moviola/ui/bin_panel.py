@@ -750,19 +750,6 @@ class BinPanel(QWidget):
             m.addSeparator()
             self._bin_menu(m, ids, tree.bin_at(it) if it is not None else None)
             m.addSeparator()
-            if not audio and len(ids) == 1:
-                uses = self._uses_cb(ids[0]) if getattr(self, "_uses_cb", None) else []
-                if len(uses) > 1:
-                    um = m.addMenu("Mostra in Montaggio")
-                    for lab, iid in uses:
-                        um.addAction(lab, lambda i=iid: self.request.emit("show_item:" + i, ids))
-                else:
-                    a = m.addAction("Mostra in Montaggio" if uses else "Mostra in Montaggio (non usata)",
-                                    lambda: self.request.emit("show_montage", ids))
-                    a.setEnabled(bool(uses))
-                a = m.addAction("Apri in Colore", lambda: self.request.emit("open_color", ids))
-                a.setEnabled(bool(uses))
-                m.addSeparator()
             m.addAction("Duplica\tCtrl+D", lambda: self.request.emit("duplicate", ids))
             m.addAction("Rinomina…\tF2", lambda: self.request.emit("rename", ids[:1]))
             m.addAction("Elimina", lambda: self.request.emit("delete", ids))
@@ -781,6 +768,19 @@ class BinPanel(QWidget):
                 m.addAction("Crea proxy", lambda: self.request.emit("proxy", ids))
             m.addAction("Ricollega file…", lambda: self.request.emit("relink", ids[:1]))
             m.addAction("Mostra il file nella cartella", lambda: self.request.emit("reveal", ids[:1]))
+            if not audio and len(ids) == 1:
+                m.addSeparator()
+                uses = self._uses_cb(ids[0]) if getattr(self, "_uses_cb", None) else []
+                if len(uses) > 1:
+                    um = m.addMenu("Mostra in Montaggio")
+                    for lab, iid in uses:
+                        um.addAction(lab, lambda i=iid: self.request.emit("show_item:" + i, ids))
+                else:
+                    a = m.addAction("Mostra in Montaggio" if uses else "Mostra in Montaggio (non usata)",
+                                    lambda: self.request.emit("show_montage", ids))
+                    a.setEnabled(bool(uses))
+                a = m.addAction("Mostra in Colore", lambda: self.request.emit("open_color", ids))
+                a.setEnabled(bool(uses))
         else:
             m.addAction(_new_folder_icon(), "Nuova cartella…", lambda: self.request.emit("new_bin", []))
             m.addSeparator()

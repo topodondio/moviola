@@ -254,7 +254,7 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
 
     def _on_frame(self, f):
         (self.src_viewer if f.mode == "source" else self.viewer).set_frame(f)
-        if f.hist is not None:
+        if f.hist is not None and self.page != PAGE_COLOR:
             self.color_panel.curve.set_hist(f.hist)
         if f.mode != "source" and self.page == PAGE_COLOR:
             self._parade_update()

@@ -153,22 +153,15 @@ class RefsMixin:
         if getattr(self, "page", None) == PAGE_COLOR:
             self.set_parade(not self.color_page.parade_btn.isChecked())
 
-    def set_parade_mode(self, mode):
-        self.cfg["parade_mode"] = mode
-        self._parade_update(force=True)
-
     def _parade_update(self, force=False):
         """Ricalcola la parade: subito se il video è fermo, al massimo 4 volte al secondo mentre suona."""
         cp = getattr(self, "color_page", None)
         if cp is None:
             return
-        on = getattr(self, "page", None) == PAGE_COLOR and cp.parade_btn.isChecked() and self.viewer is not None
-        overlay_mode = self.cfg.get("parade_mode", "below") == "overlay"
-        cp.parade.setVisible(on and not overlay_mode)
-        if not on:
-            if self.viewer is not None:
-                self.viewer.overlay.parade_img = None
-                self.viewer.overlay.update()
+        in_color = getattr(self, "page", None) == PAGE_COLOR and self.viewer is not None
+        on = in_color and cp.parade_btn.isChecked()
+        cp.parade.setVisible(on)
+        if not in_color:
             return
         now = time.monotonic()
         last = self.__dict__.get("_parade_t", 0.0)
@@ -181,6 +174,9 @@ class RefsMixin:
         cur = self.viewer.graded_image(220)
         if cur is None:
             cp.parade.set_data(None, None, "", "")
+            return
+        self.color_panel.curve.set_hist(scopes.histograms(cur))     # istogramma sotto la curva
+        if not on:
             return
         clip_p = scopes.parade(cur)
         ref = None
@@ -197,14 +193,8 @@ class RefsMixin:
         if hi > 0.02:
             note += f"bianchi bruciati {hi * 100:.0f}%"
         cp.parade.set_data(clip_p, ref, e["name"] if e else "", note)
-        if overlay_mode:
-            ov = self.viewer.overlay
-            both = np.concatenate([ref, clip_p], axis=1) if ref is not None else clip_p
-            ov.parade_img = _qimage(both)
-            ov.update()
-        else:
-            self.viewer.overlay.parade_img = None
-            self.viewer.overlay.update()
+        self.viewer.overlay.parade_img = None
+        self.viewer.overlay.update()
 
     def _parade_flush(self):
         self.__dict__["_parade_pending"] = False

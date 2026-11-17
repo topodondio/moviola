@@ -1064,8 +1064,6 @@ class TimelineView(QWidget):
         m = QMenu(self)
         m.addAction("Velocità ed effetti…", lambda: self.action.emit("open_effects", ids))
         if any(i["kind"] == "video" for i in its):
-            m.addAction("Apri in Colore", lambda: self.action.emit("open_color", ids))
-        if any(i["kind"] == "video" for i in its):
             tm = m.addMenu("Transizione con la clip precedente")
             tm.addAction("Nessuna", lambda: self.action.emit("transition:", ids))
             for k, lab in TRANSITIONS.items():
@@ -1099,6 +1097,7 @@ class TimelineView(QWidget):
         m.addSeparator()
         if any(i["kind"] == "video" for i in its):
             m.addAction("Mostra nella clip", lambda: self.action.emit("show_in_clip", ids))
+            m.addAction("Mostra in Colore", lambda: self.action.emit("open_color", ids))
         m.exec(gp)
 
     def _marker_menu(self, mk, gp, t):

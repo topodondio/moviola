@@ -31,3 +31,21 @@ w.set_page(PAGE_EXPORT); print(w.pages.currentWidget() is w.export_page)
 
 assert [round(i.get("grade",{}).get("saturation",0)) for i in pr.items if i["kind"]=="video"]==[40,40,40]
 print("SCHEDA COLORE OK")
+# --- passaggio del mouse sulla striscia: anteprima del punto della timeline, clic = posizione
+from PySide6.QtCore import QPointF
+st = w.color_page.strip
+st.refresh(); app.processEvents()
+body = st.body
+it0 = body.items[1]
+n_pos = w.engine.position
+iid = it0["id"]
+st._hover(iid, 0.5); st._hover_timer.stop(); st._hover_flush()
+exp = it0["start"] + 0.5 * w.project.item_dur(it0)
+assert abs(w.engine.position - exp) < 0.1, (w.engine.position, exp)
+st._hover_end(); assert abs(w.engine.position - n_pos) < 0.1
+st._clicked(iid, Qt.NoModifier, 0.25)
+assert abs(w.engine.position - (it0["start"] + 0.25 * w.project.item_dur(it0))) < 0.1
+# istogramma aggiornato nella scheda Colore
+w._parade_update(force=True)
+assert w.color_panel.curve.hist is not None and w.color_panel.curve.hist.ndim == 2
+print("STRISCIA E ISTOGRAMMA OK")

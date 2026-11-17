@@ -30,6 +30,15 @@ def parade(img: np.ndarray, cols: int = 160, levels: int = LEVELS) -> np.ndarray
     return (out * 255).astype(np.uint8)
 
 
+def histograms(img: np.ndarray) -> np.ndarray:
+    """Istogrammi 4x256: luminosità, rosso, verde, blu."""
+    y = (img[..., 0].astype(np.uint16) * 54 + img[..., 1].astype(np.uint16) * 183
+         + img[..., 2].astype(np.uint16) * 19) >> 8
+    out = [np.bincount(y.ravel(), minlength=256)]
+    out += [np.bincount(img[..., c].ravel(), minlength=256) for c in range(3)]
+    return np.stack(out).astype(np.float32)
+
+
 def clipping(img: np.ndarray) -> tuple[float, float]:
     """Frazione di pixel con un canale a 0 (neri tappati) e a 255 (bianchi bruciati)."""
     lo = float(np.mean(img.min(axis=2) <= 1))

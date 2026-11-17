@@ -468,9 +468,14 @@ Sotto il monitor della scheda COLORE:
   a tutto schermo finché non rilasci). Il tasto **W** passa da un modo all'altro.
 - **Parade RGB** (tasto **P**): tre grafici (rosso, verde, blu) colonna per colonna, per vedere
   dominanti di colore, neri tappati e bianchi bruciati. Sta sotto il monitor, mai al posto
-  dell'immagine; dalla freccia accanto si può sovrapporre in semitrasparenza. Con un
+  dell'immagine. Con un
   riferimento in confronto è divisa in due: riferimento e clip. Si calcola subito sul
   fotogramma fermo e al massimo 4 volte al secondo mentre il video suona.
+- **Istogramma** nella colonna di destra, dietro la curva: segue la curva scelta (luminosità o un
+  canale) e si aggiorna come la parade.
+- **Striscia dei pezzi**: passando con il mouse su un pezzo compare una linea verticale e il monitor
+  mostra quel punto della timeline; il clic porta lì la testina (senza clic, all'uscita del mouse la
+  testina torna dov'era).
 - Fuori dalla scheda COLORE il monitor del Montaggio torna pulito.
 
 ## Rimandi tra le schede
@@ -478,12 +483,12 @@ Sotto il monitor della scheda COLORE:
 La selezione è condivisa: il pezzo o la clip scelti restano selezionati cambiando scheda. In più,
 col tasto destro (o con il doppio clic) si salta da una scheda all'altra:
 
-- **MONTAGGIO**, su un pezzo: *Apri in Colore* (livello Pezzo) e *Mostra nella clip* (apre SELEZIONE
+- **MONTAGGIO**, su un pezzo: *Mostra nella clip* (apre SELEZIONE
   CLIP sulla parte o, se il pezzo è stato accorciato, sulla clip con il tratto usato tra I e O).
-  Il **doppio clic** su un pezzo lo apre in COLORE.
+  In fondo al menu c'è anche *Mostra in Colore* (livello Pezzo). Il **doppio clic** su un pezzo lo apre in COLORE.
 - **COLORE**, su una miniatura: *Mostra in Montaggio* e *Mostra nella clip*.
 - **SELEZIONE CLIP**, su una clip o una sua parte: *Mostra in Montaggio* (se è usata più volte
-  compare l'elenco con i tempi; grigio se non è usata) e *Apri in Colore* (livello Clip).
+  compare l'elenco con i tempi; grigio se non è usata) e, in fondo al menu, *Mostra in Colore* (livello Clip).
 - **← Torna indietro** (in alto a destra, oppure Ctrl/Cmd+[): ti riporta alla scheda e al punto
   esatto da cui eri partito.
 
@@ -554,3 +559,8 @@ Test del motore: `python -m tests.test_core`
 
 Dissolvenza incrociata tra due clip, fermo immagine, rotazione,
 maschere/gradiente lineare come in Camera Oscura.
+
+
+### Comandi sotto i monitor del Montaggio
+Sotto il monitor della timeline (destra) e sotto quello della clip (sinistra): inizio/fine, indietro, **−1 f**,
+play/pausa, **+1 f**, avanti. Spazio, J K L e le frecce agiscono sul monitor che hai usato per ultimo.

@@ -376,6 +376,7 @@ class CurveWidget(QWidget):
         self.hist = hist
         self.update()
 
+
     def _box(self):
         m = 6
         s = min(self.width(), self.height()) - 2 * m
@@ -402,13 +403,20 @@ class CurveWidget(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         b = self._box()
         p.fillRect(b, QColor(22, 23, 25))
-        if self.hist is not None and self.hist.max() > 0:
-            h = np.sqrt(self.hist / self.hist.max())
+        hist = self.hist
+        tint = QColor(70, 72, 78, 160)
+        if hist is not None and hist.ndim == 2:
+            k = {"master": 0, "r": 1, "g": 2, "b": 3}.get(self.channel, 0)
+            hist = hist[k]
+            if k:
+                tint = QColor(*[(255, 90, 90, 130), (90, 220, 110, 130), (100, 150, 255, 130)][k - 1])
+        if hist is not None and hist.max() > 0:
+            h = np.sqrt(hist / hist.max())
             path = QPainterPath(QPointF(b.left(), b.bottom()))
             for i, v in enumerate(h):
                 path.lineTo(b.left() + i / 255 * b.width(), b.bottom() - v * b.height() * 0.9)
             path.lineTo(b.right(), b.bottom())
-            p.fillPath(path, QColor(70, 72, 78, 160))
+            p.fillPath(path, tint)
         p.setPen(QPen(QColor(50, 52, 56), 1))
         for k in range(1, 4):
             p.drawLine(QPointF(b.left() + b.width() * k / 4, b.top()), QPointF(b.left() + b.width() * k / 4, b.bottom()))

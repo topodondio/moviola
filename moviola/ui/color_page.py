@@ -1,7 +1,7 @@
 """Scheda COLORE: monitor grande, striscia dei pezzi della timeline e controlli fotografici."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (QButtonGroup, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea,
@@ -14,8 +14,10 @@ ACCENT = QColor(232, 163, 61)
 
 
 class _StripBody(QWidget):
-    clicked = Signal(str, object)     # id del pezzo, modificatori
+    clicked = Signal(str, object, float)   # id del pezzo, modificatori, punto nel pezzo (0..1)
     context = Signal(str, object)     # id, posizione globale
+    hovered = Signal(str, float)      # id del pezzo, punto nel pezzo (0..1)
+    left = Signal()
 
     def __init__(self, host):
         super().__init__()
@@ -23,6 +25,7 @@ class _StripBody(QWidget):
         self.items = []
         self.setMouseTracking(True)
         self.setFixedHeight(TILE_H + 34)
+        self._hov = None            # (indice del pezzo, x)
 
     def set_items(self, items):
         self.items = items
@@ -83,7 +86,31 @@ class _StripBody(QWidget):
             p.setPen(QColor(120, 120, 120))
             p.drawText(QRectF(r.left(), r.bottom() + 16, r.width(), 14), Qt.AlignLeft | Qt.AlignVCenter,
                        f"{pr.item_dur(it):.1f} s")
+        if self._hov is not None and self._hov[0] < len(self.items):
+            r = self._rect(self._hov[0])
+            x = min(max(self._hov[1], r.left()), r.right())
+            p.setPen(QPen(QColor(255, 255, 255, 230), 1.5))
+            p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
         p.end()
+
+    def _frac(self, n, x):
+        r = self._rect(n)
+        return min(1.0, max(0.0, (x - r.left()) / r.width()))
+
+    def mouseMoveEvent(self, e):
+        n = self._hit(e.position())
+        if n is None:
+            self.leaveEvent(None)
+            return
+        self._hov = (n, e.position().x())
+        self.update()
+        self.hovered.emit(self.items[n]["id"], self._frac(n, e.position().x()))
+
+    def leaveEvent(self, e):
+        if self._hov is not None:
+            self._hov = None
+            self.update()
+            self.left.emit()
 
     def mousePressEvent(self, e):
         n = self._hit(e.position())
@@ -93,7 +120,7 @@ class _StripBody(QWidget):
         if e.button() == Qt.RightButton:
             self.context.emit(it["id"], e.globalPosition().toPoint())
         elif e.button() == Qt.LeftButton:
-            self.clicked.emit(it["id"], e.modifiers())
+            self.clicked.emit(it["id"], e.modifiers(), self._frac(n, e.position().x()))
 
 
 class ClipStrip(QScrollArea):
@@ -111,6 +138,14 @@ class ClipStrip(QScrollArea):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setFixedHeight(TILE_H + 34 + 16)
         self.body.clicked.connect(self._clicked)
+        self.body.hovered.connect(self._hover)
+        self.body.left.connect(self._hover_end)
+        self._restore = None
+        self._pending = None
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.setInterval(35)
+        self._hover_timer.timeout.connect(self._hover_flush)
         self.body.context.connect(self._context)
         self._last = None
 
@@ -133,7 +168,36 @@ class ClipStrip(QScrollArea):
                 self.ensureVisible(int(self.body._rect(n).center().x()), 20, TILE_W, 10)
                 break
 
-    def _clicked(self, iid, mods):
+    def _time_at(self, iid, frac):
+        it = self.host.project.item(iid)
+        if it is None:
+            return None
+        d = self.host.project.item_dur(it)
+        return it["start"] + min(frac * d, max(0.0, d - 0.04))
+
+    def _hover(self, iid, frac):
+        """Passando sopra a un pezzo il monitor mostra quel punto della timeline (la testina torna dov'era
+        quando il mouse esce)."""
+        if self.host.engine.playing:
+            return
+        if self._restore is None:
+            self._restore = self.host.engine.position
+        self._pending = self._time_at(iid, frac)
+        if not self._hover_timer.isActive():
+            self._hover_timer.start()
+
+    def _hover_flush(self):
+        if self._pending is not None and self._restore is not None:
+            self.host._timeline_seek(self._pending)
+
+    def _hover_end(self):
+        self._hover_timer.stop()
+        self._pending = None
+        if self._restore is not None and not self.host.engine.playing:
+            self.host._timeline_seek(self._restore)
+        self._restore = None
+
+    def _clicked(self, iid, mods, frac=0.0):
         view = self.host.timeline.view
         ids = [i["id"] for i in self.body.items]
         sel = set(view.selection)
@@ -148,8 +212,10 @@ class ClipStrip(QScrollArea):
         self.host.active_panel = "timeline"
         view.set_selection(sel)
         it = self.host.project.item(iid)
+        self._hover_timer.stop()
+        self._restore = None            # il clic fissa la testina nel punto scelto
         if it is not None and (len(sel) == 1 or iid in sel):
-            self.host._timeline_seek(it["start"] + min(0.1, self.host.project.item_dur(it) / 2))
+            self.host._timeline_seek(self._time_at(iid, frac))
         self.body.update()
 
     def _context(self, iid, pos):
@@ -304,8 +370,8 @@ class ColorPage(QWidget):
         self.ref_combo.setToolTip("I riferimenti salvati in questo progetto")
         self.ref_combo.currentIndexChanged.connect(lambda _i: host._apply_compare())
         row.addWidget(self.ref_combo)
-        more = QPushButton("⋯")
-        more.setFixedWidth(30)
+        more = QPushButton("Gestisci…")
+        more.setToolTip("Rinomina o elimina il riferimento scelto")
         more.setFocusPolicy(Qt.NoFocus)
         mm = QMenu(more)
         mm.addAction("Rinomina…", host.ref_rename)
@@ -349,21 +415,6 @@ class ColorPage(QWidget):
         self.parade_btn.setChecked(bool(host.cfg.get("parade", False)))
         self.parade_btn.toggled.connect(host.set_parade)
         row.addWidget(self.parade_btn)
-        pm = QPushButton("▾")
-        pm.setFixedWidth(28)
-        pm.setFocusPolicy(Qt.NoFocus)
-        menu = QMenu(pm)
-        grp = []
-        for key, lab in (("below", "Sotto il monitor"), ("overlay", "Sovrapposta in semitrasparenza")):
-            a = menu.addAction(lab)
-            a.setCheckable(True)
-            a.setChecked(host.cfg.get("parade_mode", "below") == key)
-            a.triggered.connect(lambda _c=False, k=key: (host.set_parade_mode(k), [x.setChecked(x is self_a[k])
-                                                                                   for x in grp]))
-            grp.append(a)
-        self_a = {"below": grp[0], "overlay": grp[1]}
-        pm.setMenu(menu)
-        row.addWidget(pm)
         return row
 
     def compare_mode(self):
