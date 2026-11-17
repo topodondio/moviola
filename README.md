@@ -450,6 +450,22 @@ Le schede sono ora cinque: ARCHIVIO PROGETTI, SELEZIONE CLIP, MONTAGGIO, **COLOR
   **GENERALE** (tutto il montaggio).
 - La selezione è la stessa della timeline: cambiando scheda resta quella.
 
+### Confronto con un riferimento e parade RGB
+
+Sotto il monitor della scheda COLORE:
+
+- **Fissa riferimento** (Ctrl/Cmd+Maiusc+R) salva il fotogramma che vedi, con la sua correzione.
+  I riferimenti si raccolgono nel progetto (menu a tendina, «⋯» per rinominare o eliminare).
+- **Confronto**: *Affiancato* (riferimento a sinistra, clip a destra), *Tendina* (si trascina la
+  linea sul monitor) e **Lampeggio** (tieni premuto il pulsante o il tasto **Q**: vedi il riferimento
+  a tutto schermo finché non rilasci). Il tasto **W** passa da un modo all'altro.
+- **Parade RGB** (tasto **P**): tre grafici (rosso, verde, blu) colonna per colonna, per vedere
+  dominanti di colore, neri tappati e bianchi bruciati. Sta sotto il monitor, mai al posto
+  dell'immagine; dalla freccia accanto si può sovrapporre in semitrasparenza. Con un
+  riferimento in confronto è divisa in due: riferimento e clip. Si calcola subito sul
+  fotogramma fermo e al massimo 4 volte al secondo mentre il video suona.
+- Fuori dalla scheda COLORE il monitor del Montaggio torna pulito.
+
 ## Archiviare un progetto
 
 In **ARCHIVIO PROGETTI** seleziona un progetto e clicca **Archivia…**. Scegli cosa mettere nella cartella:

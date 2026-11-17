@@ -234,6 +234,7 @@ class BuildMixin:
             self.right_tabs.setCurrentIndex(keep + 1)
         self._viewer_to(PAGE_COLOR if index == PAGE_COLOR else PAGE_MONTAGE)
         self.pages.setCurrentIndex(index)
+        self._apply_compare()
         if index == PAGE_PROJECTS:
             self.projects.set_current(self.project.path)
             self.projects.refresh()
@@ -277,6 +278,7 @@ class BuildMixin:
     def _after_project_loaded(self):
         """Aperto o creato un progetto: si va alle clip se la timeline è vuota,
         altrimenti al montaggio."""
+        self.__dict__["_ref_cache"] = {}
         self.set_page(PAGE_MONTAGE if self.project.items else PAGE_CLIP)
 
     def _build_source_panel(self):
@@ -462,6 +464,7 @@ class BuildMixin:
         self.src_viewer = sv
         self.mon_viewer = mv
         self._apply_guides()
+        self._apply_compare()
         v.overlay.drag_begin.connect(self._viewer_drag_begin)
         v.overlay.drag_move.connect(self._viewer_drag_move)
         v.overlay.drag_end.connect(self._viewer_drag_end)
@@ -607,6 +610,11 @@ class BuildMixin:
         act(m, "Copia regolazioni", self.copy_grade, "Ctrl+Shift+C")
         act(m, "Incolla regolazioni", self.paste_grade, "Ctrl+Shift+V")
         act(m, "Azzera regolazioni", self.reset_grade)
+        m.addSeparator()
+        act(m, "Fissa riferimento (fotogramma corrente)", self.ref_capture, "Ctrl+Shift+R")
+        act(m, "Confronto: spento / affiancato / tendina", self.cycle_compare, "W")
+        act(m, "Parade RGB", self.toggle_parade, "P")
+        m.addSeparator()
         self.act_bypass = act(m, "Prima / dopo", self.set_bypass, "\\", checkable=True)
         act(m, "Correzione colore accesa/spenta nell'anteprima (FX)", lambda: self.set_fx_enabled(not self.fx_btn.isChecked()),
             "Ctrl+Shift+F")

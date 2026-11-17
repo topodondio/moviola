@@ -25,9 +25,10 @@ from .win_monitor import MonitorMixin
 from .win_color import ColorMixin
 from .win_media import MediaMixin
 from .win_project import ProjectMixin
+from .win_refs import RefsMixin
 
 
-class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, InspectMixin, MonitorMixin, ColorMixin, MediaMixin, ProjectMixin):
+class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, InspectMixin, MonitorMixin, ColorMixin, RefsMixin, MediaMixin, ProjectMixin):
     media_event = Signal(str, str, object)
 
     def __init__(self, cfg: dict):
@@ -149,6 +150,8 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
         self.timeline.sync()
         self._update_source_bar()
         self.refresh_color_panel()
+        self.color_page.fill_refs()
+        self._apply_compare()
         self.refresh_inspector()
         self._update_title()
         self._apply_aspect()
@@ -251,6 +254,8 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
         (self.src_viewer if f.mode == "source" else self.viewer).set_frame(f)
         if f.hist is not None:
             self.color_panel.curve.set_hist(f.hist)
+        if f.mode != "source" and self.page == PAGE_COLOR:
+            self._parade_update()
 
     def _on_position(self, t):
         fps = self.engine.fps()

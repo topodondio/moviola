@@ -8,8 +8,8 @@ CpuViewer, che riceve fotogrammi già corretti dal motore.
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QSurfaceFormat
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QSurfaceFormat
 from PySide6.QtWidgets import QWidget
 
 from .guides import draw_guides
@@ -96,14 +96,99 @@ class TextOverlay(QWidget):
         self.bars = 0.0
         self.highlight = None  # id della scritta selezionata
         self.guides = None     # guide di composizione e maschera di ritaglio (solo da guardare)
+        self.ref_img = None    # QImage del riferimento per il confronto colore
+        self.ref_name = ""
+        self.cmp = None        # None, "side" (affiancato) o "wipe" (tendina)
+        self.wipe = 0.5
+        self.flash = False     # lampeggio: mostra il riferimento finché si tiene premuto il tasto
+        self.parade_img = None  # QImage della parade sovrapposta (se richiesta)
+        self.parade_title = ""
         self._press = None
+        self._wiping = False
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setMouseTracking(False)
 
     def project_rect(self):
-        x, y, w, h = fit_rect(1, 1, self.width(), self.height(), self.viewer.aspect)
+        x, y, w, h = self.viewer._project_rect(self.width(), self.height())
         return QRectF(x, y, w, h)
+
+    def set_compare(self, img=None, name="", mode=None):
+        self.ref_img, self.ref_name, self.cmp = img, name, (mode if img is not None else None)
+        self.viewer.side = self.cmp == "side"
+        self.viewer.update()
+        self.update()
+
+    def _ref_rect(self, fr):
+        """Dove sta il riferimento: affiancato nella metà sinistra, altrimenti sopra al fotogramma."""
+        if self.cmp == "side":
+            x, y, w, h = fit_rect(1, 1, self.width() / 2, self.height(), self.viewer.aspect)
+            return QRectF(x, y, w, h)
+        return fr
+
+    def _draw_compare(self, p, fr):
+        if self.ref_img is None or not (self.cmp or self.flash):
+            return
+        p.save()
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        rr = self._ref_rect(fr)
+        if self.flash:                          # riferimento a tutto fotogramma finché il tasto è premuto
+            p.drawImage(fr, self.ref_img)
+            self._tag(p, fr, "RIFERIMENTO · " + self.ref_name)
+        elif self.cmp == "side":
+            p.fillRect(QRectF(0, 0, self.width() / 2, self.height()), QColor(20, 21, 23))
+            p.drawImage(rr, self.ref_img)
+            self._tag(p, rr, "RIFERIMENTO · " + self.ref_name)
+            self._tag(p, fr, "CLIP")
+        elif self.cmp == "wipe":
+            x = fr.left() + self.wipe * fr.width()
+            p.setClipRect(QRectF(fr.left(), fr.top(), x - fr.left(), fr.height()))
+            p.drawImage(fr, self.ref_img)
+            p.setClipping(False)
+            p.setPen(QPen(QColor(255, 255, 255, 230), 1.5))
+            p.drawLine(QPointF(x, fr.top()), QPointF(x, fr.bottom()))
+            p.setBrush(QColor(232, 163, 61))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(QPointF(x, fr.center().y()), 9, 9)
+            p.setPen(QColor(27, 27, 27))
+            p.drawText(QRectF(x - 9, fr.center().y() - 9, 18, 18), Qt.AlignCenter, "↔")
+            self._tag(p, QRectF(fr.left(), fr.top(), max(0.0, x - fr.left()), fr.height()),
+                      "RIFERIMENTO · " + self.ref_name)
+        p.restore()
+
+    def _tag(self, p, r, text):
+        p.save()
+        p.setClipRect(r)
+        f = QFont(p.font())
+        f.setPointSizeF(max(8.0, f.pointSizeF()))
+        f.setBold(True)
+        p.setFont(f)
+        w = min(r.width() - 12, p.fontMetrics().horizontalAdvance(text) + 14)
+        if w > 20:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 0, 0, 170))
+            p.drawRoundedRect(QRectF(r.left() + 6, r.top() + 6, w, 20), 3, 3)
+            p.setPen(QColor(240, 240, 240))
+            p.drawText(QRectF(r.left() + 12, r.top() + 6, w - 8, 20), Qt.AlignLeft | Qt.AlignVCenter,
+                       p.fontMetrics().elidedText(text, Qt.ElideRight, int(w - 10)))
+        p.restore()
+
+    def _draw_parade(self, p, fr):
+        if self.parade_img is None:
+            return
+        h = max(60.0, fr.height() * 0.38)
+        r = QRectF(fr.left() + 8, fr.bottom() - h - 8, fr.width() - 16, h)
+        p.save()
+        p.setOpacity(0.78)
+        p.fillRect(r, QColor(8, 8, 9))
+        p.setOpacity(0.9)
+        p.drawImage(r, self.parade_img)
+        p.setOpacity(1.0)
+        p.setPen(QPen(QColor(255, 255, 255, 40), 1))
+        for k in (0.25, 0.5, 0.75):
+            y = r.top() + k * r.height()
+            p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y))
+        p.restore()
 
     def set_guides(self, g):
         self.guides = g
@@ -111,7 +196,8 @@ class TextOverlay(QWidget):
 
     def paintEvent(self, e):
         has_g = bool(self.guides and (self.guides.get("grids") or self.guides.get("crop")))
-        if not self.texts and self.bars <= 0 and not has_g:
+        extra = self.ref_img is not None and bool(self.cmp or self.flash) or self.parade_img is not None
+        if not self.texts and self.bars <= 0 and not has_g and not extra:
             return
         p = QPainter(self)
         fr = self.project_rect()
@@ -127,10 +213,12 @@ class TextOverlay(QWidget):
                 p.setPen(QPen(QColor(232, 163, 61), 1, Qt.DashLine))
                 p.setBrush(Qt.NoBrush)
                 p.drawRect(text_box(item, fr))
+        p.setClipping(False)
+        p.setOpacity(1.0)
+        self._draw_compare(p, fr)
         if has_g:
-            p.setClipping(False)
-            p.setOpacity(1.0)
             draw_guides(p, fr, self.guides)
+        self._draw_parade(p, fr)
         p.end()
 
     def mousePressEvent(self, e):
@@ -139,11 +227,22 @@ class TextOverlay(QWidget):
         fr = self.project_rect()
         if fr.width() <= 0:
             return
+        if self.cmp == "wipe" and self.ref_img is not None:      # tendina: si trascina la linea
+            self._wiping = True
+            self._set_wipe(e.position().x(), fr)
+            return
         pos = e.position()
         self._press = pos
         self.drag_begin.emit((pos.x() - fr.left()) / fr.width(), (pos.y() - fr.top()) / fr.height())
 
+    def _set_wipe(self, x, fr):
+        self.wipe = max(0.02, min(0.98, (x - fr.left()) / max(fr.width(), 1)))
+        self.update()
+
     def mouseMoveEvent(self, e):
+        if self._wiping:
+            self._set_wipe(e.position().x(), self.project_rect())
+            return
         if self._press is None:
             return
         fr = self.project_rect()
@@ -151,6 +250,9 @@ class TextOverlay(QWidget):
         self.drag_move.emit(d.x() / fr.width(), d.y() / fr.height())
 
     def mouseReleaseEvent(self, e):
+        if self._wiping:
+            self._wiping = False
+            return
         if self._press is not None:
             self._press = None
             self.drag_end.emit()
@@ -182,6 +284,7 @@ def frame_layers(frame):
 class _Base:
     def _init_base(self):
         self.aspect = 16 / 9
+        self.side = False          # confronto affiancato: il fotogramma sta nella metà destra
         self._layers = []
         self._fade = 0.0
         self._fade_color = (0.0, 0.0, 0.0)
@@ -196,7 +299,26 @@ class _Base:
         self.overlay.update()
 
     def _project_rect(self, ww, wh):
+        if self.side:
+            x, y, w, h = fit_rect(1, 1, ww / 2, wh, self.aspect)
+            return x + ww / 2, y, w, h
         return fit_rect(1, 1, ww, wh, self.aspect)
+
+    def graded_image(self, max_w=0):
+        """Il fotogramma com'è mostrato (con la correzione applicata) come array uint8 HxWx3,
+        eventualmente ridotto a max_w colonne; None se non c'è nulla da vedere."""
+        if not self._layers:
+            return None
+        ly = self._layers[0]
+        img = ly.img
+        if max_w and img.shape[1] > max_w:
+            st = int(np.ceil(img.shape[1] / max_w))
+            img = img[::st, ::st]
+        img = np.ascontiguousarray(img)
+        if ly.lut is not None and ly.lut_key != "identity":
+            from .. import color
+            img = color.apply_lut_image(img, ly.lut)
+        return img
 
     def _layer_rect(self, ly, ww, wh):
         """Rettangolo dell'immagine: adattata al formato del progetto, poi
