@@ -301,6 +301,8 @@ class BinMixin:
 
     def bin_action(self, action, ids):
         pr = self.project
+        if self.links_bin_action(action, ids):
+            return
         if self._bin_folder_action(action, ids):
             return
         if action == "import":

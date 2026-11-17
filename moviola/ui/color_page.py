@@ -163,6 +163,9 @@ class ClipStrip(QScrollArea):
                         lambda: self.action.emit("paste", iid))
         a.setEnabled(self.host.grade_clip is not None)
         m.addAction("Azzera la correzione", lambda: self.action.emit("reset", iid))
+        m.addSeparator()
+        m.addAction("Mostra in Montaggio", lambda: self.action.emit("montage", iid))
+        m.addAction("Mostra nella clip", lambda: self.action.emit("clip", iid))
         m.exec(pos)
 
 
@@ -396,7 +399,11 @@ class ColorPage(QWidget):
         n = max(0, min(len(items) - 1, cur + d))
         self.strip._clicked(items[n]["id"], Qt.NoModifier)
 
-    def _strip_action(self, name, _iid):
+    def _strip_action(self, name, iid):
+        if name == "montage":
+            return self.host.show_item_in_montage(iid)
+        if name == "clip":
+            return self.host.show_item_in_clip(iid)
         {"copy": self.host.copy_grade, "paste": self.host.paste_grade, "reset": self.host.reset_grade}[name]()
         self.strip.repaint_tiles()
 

@@ -279,6 +279,8 @@ class BuildMixin:
         """Aperto o creato un progetto: si va alle clip se la timeline è vuota,
         altrimenti al montaggio."""
         self.__dict__["_ref_cache"] = {}
+        self.__dict__["_nav_back"] = None
+        self._update_back_button()
         self.set_page(PAGE_MONTAGE if self.project.items else PAGE_CLIP)
 
     def _build_source_panel(self):
@@ -624,6 +626,9 @@ class BuildMixin:
         self.preset_menu.aboutToShow.connect(self._fill_presets)
 
         m = mb.addMenu("Vista")
+        self.act_back = act(m, "Torna indietro (al punto da cui sei partito)", self.nav_back, "Ctrl+[")
+        self.act_back.setEnabled(False)
+        m.addSeparator()
         qm = m.addMenu("Risoluzione anteprima")
         grp = QActionGroup(self)
         self.quality_actions = {}
@@ -703,6 +708,14 @@ class BuildMixin:
         tb.addWidget(left)
         tb.addWidget(self._build_page_bar())
         tb.addWidget(right)
+        self.back_btn = QPushButton("← Torna indietro")
+        self.back_btn.setFocusPolicy(Qt.NoFocus)
+        self.back_btn.setToolTip("Torna alla scheda e al punto da cui sei partito (Ctrl/Cmd+[)")
+        self.back_btn.setStyleSheet("QPushButton { color:#e8a33d; border:1px solid #6b5326; border-radius:4px;"
+                                    " padding:3px 10px; background:#2a2518; } QPushButton:hover { background:#3a321f; }")
+        self.back_btn.clicked.connect(self.nav_back)
+        self.back_tb_act = tb.addWidget(self.back_btn)
+        self.back_tb_act.setVisible(False)
         tb.setStyleSheet("QToolBar { background: #1a1b1d; border: none; spacing: 2px; padding: 3px 6px; }"
                          "QToolButton { padding: 4px; border: none; background: transparent; }"
                          "QToolButton:hover { background: #34363a; border-radius: 4px; }"

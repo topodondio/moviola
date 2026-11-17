@@ -25,10 +25,11 @@ from .win_monitor import MonitorMixin
 from .win_color import ColorMixin
 from .win_media import MediaMixin
 from .win_project import ProjectMixin
+from .win_links import LinksMixin
 from .win_refs import RefsMixin
 
 
-class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, InspectMixin, MonitorMixin, ColorMixin, RefsMixin, MediaMixin, ProjectMixin):
+class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, InspectMixin, MonitorMixin, ColorMixin, RefsMixin, LinksMixin, MediaMixin, ProjectMixin):
     media_event = Signal(str, str, object)
 
     def __init__(self, cfg: dict):
@@ -94,6 +95,7 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
         self.bin.current_changed.connect(self.show_ref)
         self.bin.selection_changed.connect(self._bin_selection)
         self.bin.request.connect(self.bin_action)
+        self.bin._uses_cb = self.uses_menu_entries
         self.bin.hover.connect(self._bin_hover)
         e.peek_ready.connect(self._on_peek)
         self.bin.rebuilt.connect(self._schedule_sub_thumbs)

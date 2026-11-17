@@ -466,6 +466,20 @@ Sotto il monitor della scheda COLORE:
   fotogramma fermo e al massimo 4 volte al secondo mentre il video suona.
 - Fuori dalla scheda COLORE il monitor del Montaggio torna pulito.
 
+## Rimandi tra le schede
+
+La selezione è condivisa: il pezzo o la clip scelti restano selezionati cambiando scheda. In più,
+col tasto destro (o con il doppio clic) si salta da una scheda all'altra:
+
+- **MONTAGGIO**, su un pezzo: *Apri in Colore* (livello Pezzo) e *Mostra nella clip* (apre SELEZIONE
+  CLIP sulla parte o, se il pezzo è stato accorciato, sulla clip con il tratto usato tra I e O).
+  Il **doppio clic** su un pezzo lo apre in COLORE.
+- **COLORE**, su una miniatura: *Mostra in Montaggio* e *Mostra nella clip*.
+- **SELEZIONE CLIP**, su una clip o una sua parte: *Mostra in Montaggio* (se è usata più volte
+  compare l'elenco con i tempi; grigio se non è usata) e *Apri in Colore* (livello Clip).
+- **← Torna indietro** (in alto a destra, oppure Ctrl/Cmd+[): ti riporta alla scheda e al punto
+  esatto da cui eri partito.
+
 ## Archiviare un progetto
 
 In **ARCHIVIO PROGETTI** seleziona un progetto e clicca **Archivia…**. Scegli cosa mettere nella cartella:

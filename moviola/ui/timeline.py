@@ -958,7 +958,7 @@ class TimelineView(QWidget):
                 self.update()
             return
         if it is not None:
-            self.action.emit("open_effects", [it["id"]])
+            self.action.emit("open_color" if it["kind"] == "video" else "open_effects", [it["id"]])
 
     def leaveEvent(self, e):
         if self._hover_id is not None:
@@ -1064,7 +1064,7 @@ class TimelineView(QWidget):
         m = QMenu(self)
         m.addAction("Velocità ed effetti…", lambda: self.action.emit("open_effects", ids))
         if any(i["kind"] == "video" for i in its):
-            m.addAction("Colore…", lambda: self.action.emit("open_color", ids))
+            m.addAction("Apri in Colore", lambda: self.action.emit("open_color", ids))
         if any(i["kind"] == "video" for i in its):
             tm = m.addMenu("Transizione con la clip precedente")
             tm.addAction("Nessuna", lambda: self.action.emit("transition:", ids))
@@ -1097,7 +1097,8 @@ class TimelineView(QWidget):
             m.addAction("Incolla regolazioni colore", lambda: self.action.emit("paste_grade", ids))
             m.addAction("Azzera colore del pezzo", lambda: self.action.emit("reset_grade", ids))
         m.addSeparator()
-        m.addAction("Mostra nella lista clip", lambda: self.action.emit("reveal_in_bin", ids))
+        if any(i["kind"] == "video" for i in its):
+            m.addAction("Mostra nella clip", lambda: self.action.emit("show_in_clip", ids))
         m.exec(gp)
 
     def _marker_menu(self, mk, gp, t):

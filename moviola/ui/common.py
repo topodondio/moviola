@@ -38,6 +38,8 @@ Striscia dei pezzi sotto il monitor: clic per sceglierne uno, Ctrl/Cmd+clic per 
 Livelli: Clip (tutti i pezzi di quella clip) · Pezzo (solo quello scelto) · Generale (tutto il montaggio)<br>
 Ctrl/Cmd+Maiusc+C / V: copia / incolla regolazioni · \\ : prima / dopo · Doppio clic su un cursore: azzera<br>
 Ctrl/Cmd+Maiusc+R: fissa il riferimento · W: confronto spento / affiancato / tendina · tieni premuto Q: lampeggio · P: parade RGB<br><br>
+<b>Rimandi tra schede</b><br>
+Tasto destro su pezzi e clip: Apri in Colore · Mostra nella clip · Mostra in Montaggio · doppio clic su un pezzo: apre il Colore · Ctrl/Cmd+[: torna indietro<br><br>
 <b>Progetto</b><br>
 Ctrl/Cmd+Z: annulla · Ctrl/Cmd+Maiusc+Z: ripeti · Ctrl/Cmd+S: salva · Ctrl/Cmd+I: importa · Ctrl/Cmd+E: esporta
 """
