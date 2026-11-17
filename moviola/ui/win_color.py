@@ -9,6 +9,8 @@ import time
 from PySide6.QtWidgets import (QInputDialog, QMessageBox)
 
 from .. import color, paths
+from .common import PAGE_COLOR
+from .timeline import tc
 
 
 
@@ -20,13 +22,13 @@ class ColorMixin:
         t = self.color_panel.target()
         if t == "global":
             pr.data["global_grade"] = color.normalize(pr.data.get("global_grade"))
-            return [pr.data["global_grade"]], "Timeline: si applica a tutto il montaggio, sopra il resto."
+            return [pr.data["global_grade"]], "Generale: si applica a tutto il montaggio, sopra il resto."
         if t == "item":
             its = self._video_items(list(self.timeline.view.selection))
             for it in its:
                 it["grade"] = color.normalize(it.get("grade"))
             if not its:
-                return [], "Pezzo: seleziona uno o più pezzi video nella timeline."
+                return [], "Pezzo: scegli uno o più pezzi (nella striscia sotto il monitor o nella timeline)."
             names = ", ".join(i.get("origin", "") for i in its[:4]) + (" …" if len(its) > 4 else "")
             return [i["grade"] for i in its], f"Pezzo: {names} (solo questi pezzi in timeline)"
         # clip intera
@@ -45,8 +47,8 @@ class ColorMixin:
         for s in srcs:
             s["grade"] = color.normalize(s.get("grade"))
         if not srcs:
-            return [], "Clip intera: seleziona una clip nella lista o un pezzo in timeline."
-        return [s["grade"] for s in srcs], (f"Clip intera: {', '.join(s['id'] for s in srcs)} "
+            return [], "Clip: scegli un pezzo (striscia sotto il monitor) o una clip nella lista."
+        return [s["grade"] for s in srcs], (f"Clip: {', '.join(s['id'] for s in srcs)} "
                                             f"(vale per tutte le sue parti, ovunque)")
 
     def _anim_context(self):
@@ -66,7 +68,38 @@ class ColorMixin:
         return self.engine.position if self.engine.mode == "timeline" else \
             self.engine.source_positions.get("__timeline__", 0.0)
 
+    def color_page_enter(self):
+        """Si apre la scheda COLORE: se nulla è selezionato si sceglie il pezzo sotto la testina."""
+        view = self.timeline.view
+        if not any(self.project.item(i) and self.project.item(i)["kind"] == "video" for i in view.selection):
+            it = self.project.video_item_at(self.playhead_time())
+            if it is None:
+                vids = [i for i in self.project.items if i["kind"] == "video"]
+                it = min(vids, key=lambda i: i["start"]) if vids else None
+            if it is not None:
+                view.set_selection({it["id"]})
+                if self.color_panel.target() == "source":
+                    self.color_panel.set_target("item")
+        self.color_page.strip.refresh()
+        self.refresh_color_panel()
+        self.color_page.tc_label.setText(tc(self.playhead_time(), self.engine.fps()))
+        self._update_color_info()
+
+    def _update_color_info(self):
+        pr = self.project
+        it = next(iter(self._video_items(list(self.timeline.view.selection))), None)
+        src = pr.source(it["source"]) if it else None
+        if src:
+            self.color_page.info.setText(
+                f"<b>{it.get('origin') or src['id']}</b> · {src.get('name', '')} · "
+                f"{src.get('width', 0)}×{src.get('height', 0)} · {src.get('fps', 0):g} fps")
+        else:
+            self.color_page.info.setText("Nessun pezzo selezionato: scegline uno dalla striscia qui sotto.")
+
     def refresh_color_panel(self):
+        if getattr(self, "page", None) == PAGE_COLOR:
+            self.color_page.strip.refresh()
+            self._update_color_info()
         grades, info = self.color_targets()
         self.color_panel.set_editable(bool(grades))
         ctx = self._anim_context()
@@ -130,6 +163,7 @@ class ColorMixin:
         self._mark_dirty()
         self.engine.refresh()
         self.timeline.view.update()
+        self.color_page.strip.repaint_tiles()
 
     def _color_action(self, key):
         if key == "copia":

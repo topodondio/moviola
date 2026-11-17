@@ -10,7 +10,7 @@ from .. import speed as spd
 from .project_settings import ProjectSettingsDialog
 from .timeline import tc
 
-from .common import PAGE_MONTAGE, TAB_COLOR, TAB_EFFECTS
+from .common import PAGE_COLOR, PAGE_MONTAGE, TAB_EFFECTS
 
 
 class TimelineMixin:
@@ -235,7 +235,7 @@ class TimelineMixin:
             self.show_tab(TAB_EFFECTS)
             return
         elif action == "open_color":
-            self.show_tab(TAB_COLOR)
+            self.set_page(PAGE_COLOR)
             return
         elif action == "add_video_track":
             pr.checkpoint()

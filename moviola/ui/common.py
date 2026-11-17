@@ -1,8 +1,8 @@
 """Costanti condivise della finestra principale."""
 from .bin_panel import TAGS
 
-TAB_CLIP, TAB_EFFECTS, TAB_COLOR = 0, 1, 2
-PAGE_PROJECTS, PAGE_CLIP, PAGE_MONTAGE, PAGE_EXPORT = 0, 1, 2, 3
+TAB_CLIP, TAB_EFFECTS = 0, 1
+PAGE_PROJECTS, PAGE_CLIP, PAGE_MONTAGE, PAGE_COLOR, PAGE_EXPORT = 0, 1, 2, 3, 4
 
 TAB_QSS = ("QTabWidget::pane { border: none; }"
            "QTabBar::tab { padding: 8px 6px; font-weight: 700; letter-spacing: 1px; color: #8d8d8d;"
@@ -33,9 +33,10 @@ Volume disegnato: clic sulla linea gialla di una clip audio, trascina il punto, 
 1 / 2 / 3 / 0: valuta la clip (verde, giallo, rosso, nessuna) · Maiusc+R: ripple on/off<br>
 T: aggiungi una scritta · R: aggiungi un riquadro colorato · trascina nel visore: sposta scritta, riquadro o inquadratura<br>
 Ctrl/Cmd+clic: selezione multipla · Ctrl/Cmd+A: seleziona tutto<br><br>
-<b>Colore</b><br>
-Ctrl/Cmd+Maiusc+C / V: copia / incolla regolazioni · \\ : prima / dopo<br>
-Doppio clic su un cursore: azzera<br><br>
+<b>Colore</b> (scheda COLORE, Ctrl/Cmd+Maiusc+4)<br>
+Striscia dei pezzi sotto il monitor: clic per sceglierne uno, Ctrl/Cmd+clic per più pezzi, Maiusc+clic per un gruppo<br>
+Livelli: Clip (tutti i pezzi di quella clip) · Pezzo (solo quello scelto) · Generale (tutto il montaggio)<br>
+Ctrl/Cmd+Maiusc+C / V: copia / incolla regolazioni · \\ : prima / dopo · Doppio clic su un cursore: azzera<br><br>
 <b>Progetto</b><br>
 Ctrl/Cmd+Z: annulla · Ctrl/Cmd+Maiusc+Z: ripeti · Ctrl/Cmd+S: salva · Ctrl/Cmd+I: importa · Ctrl/Cmd+E: esporta
 """

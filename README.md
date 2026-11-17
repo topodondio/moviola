@@ -434,6 +434,22 @@ Tutte le scorciatoie: menu Aiuto → Scorciatoie (F1).
 - I pezzi che riempiono tutto il fotogramma non passano più dalla sovrapposizione sullo sfondo
   nero (stesso risultato, meno lavoro).
 
+## Scheda COLORE
+
+Le schede sono ora cinque: ARCHIVIO PROGETTI, SELEZIONE CLIP, MONTAGGIO, **COLORE**, ESPORTAZIONE
+(Ctrl/Cmd+Maiusc+1…5). I comandi colore non stanno più nel Montaggio, che resta pulito
+(timeline, tagli, tracce, cassetto; il tasto **FX** in alto accende e spegne la correzione in anteprima).
+
+- **Monitor grande** al centro, con play e timecode; sotto, la **striscia dei pezzi** della timeline
+  in ordine. Un clic sceglie il pezzo (e porta lì la testina), Ctrl/Cmd+clic ne aggiunge altri,
+  Maiusc+clic seleziona un gruppo. Il pallino arancione segna una correzione sul pezzo, quello
+  azzurro una correzione sulla clip. Tasto destro: copia, incolla su tutti i selezionati, azzera.
+- **A destra** i controlli fotografici (temperatura, tinta, esposizione, contrasto, luci, ombre,
+  bianchi, neri, luminosità, vividezza, saturazione, curva con istogramma, HSL), con tre livelli
+  ben separati in alto: **CLIP** (tutti i pezzi di quella clip), **PEZZO** (solo quello scelto),
+  **GENERALE** (tutto il montaggio).
+- La selezione è la stessa della timeline: cambiando scheda resta quella.
+
 ## Archiviare un progetto
 
 In **ARCHIVIO PROGETTI** seleziona un progetto e clicca **Archivia…**. Scegli cosa mettere nella cartella:

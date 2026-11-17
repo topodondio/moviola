@@ -7,7 +7,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QGroupBox, QHBoxLayout,
-                               QLabel, QLineEdit, QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSlider, QTabWidget,
+                               QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QSlider, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from .. import color
@@ -500,7 +500,9 @@ class ColorPanel(QWidget):
     anim_edit = Signal(str, object)  # chiave, punti [[t, v]] o None
     anim_seek = Signal(float)  # tempo relativo da mostrare nel visore
 
-    TARGETS = [("source", "Clip intera"), ("item", "Pezzo"), ("global", "Timeline")]
+    TARGETS = [("source", "Clip"), ("item", "Pezzo"), ("global", "Generale")]
+    TARGET_TIPS = ("Tutti i pezzi di quella clip, ovunque siano nella timeline",
+                   "Solo il pezzo selezionato", "Tutto il montaggio, sopra il resto")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -510,12 +512,23 @@ class ColorPanel(QWidget):
 
         # bersaglio
         trow = QHBoxLayout()
+        trow.setSpacing(0)
         self.target_group = QButtonGroup(self)
+        seg = ("QPushButton { border:1px solid #4a4c50; background:#2a2b2e; color:#a8a8a8; padding:7px 4px;"
+               " font-weight:700; letter-spacing:1px; %s }"
+               "QPushButton:checked { background:#e8a33d; color:#1b1b1b; border-color:#e8a33d; }"
+               "QPushButton:hover:!checked { color:#e0e0e0; }")
+        radius = ("border-top-left-radius:5px; border-bottom-left-radius:5px;", "border-radius:0px; border-left:none;",
+                  "border-top-right-radius:5px; border-bottom-right-radius:5px; border-left:none;")
         for i, (k, lab) in enumerate(self.TARGETS):
-            rb = QRadioButton(lab)
+            rb = QPushButton(lab.upper())
+            rb.setCheckable(True)
+            rb.setFocusPolicy(Qt.NoFocus)
+            rb.setToolTip(self.TARGET_TIPS[i])
+            rb.setStyleSheet(seg % radius[i])
             rb.setProperty("key", k)
             self.target_group.addButton(rb, i)
-            trow.addWidget(rb)
+            trow.addWidget(rb, 1)
         self.target_group.button(0).setChecked(True)
         self.target_group.idClicked.connect(lambda i: self.target_changed.emit(self.TARGETS[i][0]))
         outer.addLayout(trow)

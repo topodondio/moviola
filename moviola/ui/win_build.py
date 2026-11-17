@@ -19,7 +19,9 @@ from .timeline import TimelinePanel
 from .viewer import CpuViewer, GlViewer
 
 from .export_page import ExportPage
-from .common import GREEN_TAG, PAGE_CLIP, PAGE_EXPORT, PAGE_MONTAGE, PAGE_PROJECTS, RED_TAG, TAB_CLIP, TAB_COLOR, TAB_EFFECTS, TAB_QSS, YELLOW_TAG
+from .color_page import ColorPage
+from .common import (GREEN_TAG, PAGE_CLIP, PAGE_COLOR, PAGE_EXPORT, PAGE_MONTAGE, PAGE_PROJECTS, RED_TAG, TAB_CLIP,
+                     TAB_EFFECTS, TAB_QSS, YELLOW_TAG)
 
 
 class BuildMixin:
@@ -147,7 +149,6 @@ class BuildMixin:
         self.right_tabs.setDocumentMode(True)
         self.right_tabs.addTab(self.bin, "CLIP")
         self.right_tabs.addTab(self.inspector, "EFFETTI")
-        self.right_tabs.addTab(self.color_panel, "COLORE")
         self.right_tabs.tabBar().setExpanding(True)
         self.right_tabs.setCurrentIndex(TAB_EFFECTS)
         self.right_tabs.setMinimumWidth(220)
@@ -159,6 +160,9 @@ class BuildMixin:
         self.mont_split.setStretchFactor(0, 0)
         self.mont_split.setStretchFactor(1, 1)
         self.mont_split.setSizes([400, 1040])
+
+        # scheda COLORE: monitor grande, striscia dei pezzi, controlli fotografici
+        self.color_page = ColorPage(self)
 
         # scheda CLIP: elenco per cartelle a sinistra, visore grande a destra
         self.clip_split = QSplitter(Qt.Horizontal)
@@ -175,6 +179,7 @@ class BuildMixin:
         self.pages.addWidget(self.projects)
         self.pages.addWidget(self.clip_split)
         self.pages.addWidget(self.mont_split)
+        self.pages.addWidget(self.color_page)
         self.export_page = ExportPage(self)
         self.pages.addWidget(self.export_page)
         self.setCentralWidget(self.pages)
@@ -183,11 +188,11 @@ class BuildMixin:
 
     # ------------------------------------------------------------ schede
     def _build_page_bar(self):
-        """Le quattro schede principali, al centro della barra in alto."""
+        """Le cinque schede principali, al centro della barra in alto."""
         self.page_bar = QTabBar()
         self.page_bar.setDrawBase(False)
         self.page_bar.setExpanding(False)
-        for lab in ("ARCHIVIO PROGETTI", "SELEZIONE CLIP", "MONTAGGIO", "ESPORTAZIONE"):
+        for lab in ("ARCHIVIO PROGETTI", "SELEZIONE CLIP", "MONTAGGIO", "COLORE", "ESPORTAZIONE"):
             self.page_bar.addTab(lab)
         self.page_bar.setStyleSheet(
             "QTabBar::tab { padding: 7px 20px; font-weight: 700; letter-spacing: 1px; color: #8d8d8d;"
@@ -195,12 +200,12 @@ class BuildMixin:
             "QTabBar::tab:selected { color: #f2f2f2; border-bottom: 2px solid #e8a33d; }"
             "QTabBar::tab:hover:!selected { color: #d0d0d0; }")
         self.page_bar.setToolTip("Archivio progetti (Ctrl/Cmd+Maiusc+1) · Selezione clip (Ctrl/Cmd+Maiusc+2) · "
-                                 "Montaggio (Ctrl/Cmd+Maiusc+3) · Esportazione (Ctrl/Cmd+Maiusc+4)")
+                                 "Montaggio (Ctrl/Cmd+Maiusc+3) · Colore (Ctrl/Cmd+Maiusc+4) · Esportazione (Ctrl/Cmd+Maiusc+5)")
         self.page_bar.currentChanged.connect(self.set_page)
         return self.page_bar
 
     def set_page(self, index):
-        """Passa a una delle schede (0 archivio progetti, 1 selezione clip, 2 montaggio, 3 esportazione)."""
+        """Passa a una delle schede (0 archivio, 1 selezione clip, 2 montaggio, 3 colore, 4 esportazione)."""
         if index == self.page:
             return
         prev = self.page
@@ -227,6 +232,7 @@ class BuildMixin:
             keep = self.right_tabs.currentIndex()
             self.right_tabs.insertTab(0, self.bin, "CLIP")
             self.right_tabs.setCurrentIndex(keep + 1)
+        self._viewer_to(PAGE_COLOR if index == PAGE_COLOR else PAGE_MONTAGE)
         self.pages.setCurrentIndex(index)
         if index == PAGE_PROJECTS:
             self.projects.set_current(self.project.path)
@@ -235,9 +241,23 @@ class BuildMixin:
             self.show_current_source()
         elif index == PAGE_EXPORT:
             self.export_page.refresh()
+        elif index == PAGE_COLOR:
+            self.set_viewer_mode("timeline")
+            self.active_panel = "timeline"
+            self.color_page_enter()
         else:
             self.set_viewer_mode("timeline")
             self._update_monitor()
+
+    def _viewer_to(self, where):
+        """Il monitor della timeline sta nel Montaggio oppure, grande, nella scheda Colore."""
+        holder = self.color_page.view_holder if where == PAGE_COLOR else self.viewer_holder
+        v = self.viewer
+        if v is not None and holder.indexOf(v) < 0:
+            for h in (self.viewer_holder, self.color_page.view_holder):
+                h.removeWidget(v)
+            holder.addWidget(v)
+            v.show()
 
     def playhead_time(self):
         return float(self._timeline_pos())
@@ -435,7 +455,7 @@ class BuildMixin:
         sv = self._new_viewer(gpu)
         mv = self._new_viewer(gpu)
         self.engine.cpu_grade = isinstance(v, CpuViewer)
-        self.viewer_holder.addWidget(v)
+        (self.color_page.view_holder if getattr(self, "page", None) == PAGE_COLOR else self.viewer_holder).addWidget(v)
         self.src_viewer_holder.addWidget(sv)
         self.mon_holder.addWidget(mv)
         self.viewer = v
@@ -625,13 +645,13 @@ class BuildMixin:
         act(m, "Archivio progetti", lambda: self.set_page(PAGE_PROJECTS), "Ctrl+Shift+1")
         act(m, "Selezione clip", lambda: self.set_page(PAGE_CLIP), "Ctrl+Shift+2")
         act(m, "Montaggio", lambda: self.set_page(PAGE_MONTAGE), "Ctrl+Shift+3")
-        act(m, "Esportazione", lambda: self.set_page(PAGE_EXPORT), "Ctrl+Shift+4")
+        act(m, "Colore", lambda: self.set_page(PAGE_COLOR), "Ctrl+Shift+4")
+        act(m, "Esportazione", lambda: self.set_page(PAGE_EXPORT), "Ctrl+Shift+5")
         m.addSeparator()
         act(m, "Scheda Clip (montaggio)", lambda: self.show_tab(TAB_CLIP), "Ctrl+3")
         act(m, "Scheda Effetti (velocità, inquadratura, dissolvenze, scritte, riquadri)",
             lambda: self.show_tab(TAB_EFFECTS), "Ctrl+4")
-        act(m, "Scheda Colore", lambda: self.show_tab(TAB_COLOR), "Ctrl+5")
-
+        
         m = mb.addMenu("Aiuto")
         act(m, "Scorciatoie da tastiera", self.show_shortcuts, "F1")
         act(m, "Cartella cache (proxy e audio)", lambda: QDesktopServices.openUrl(

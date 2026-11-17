@@ -15,7 +15,7 @@ from .text_render import default_family
 from .timeline import tc
 
 
-from .common import PAGE_CLIP, PAGE_MONTAGE, PAGE_PROJECTS, TAB_COLOR, TAB_EFFECTS  # noqa: F401  (ri-esportate per i test)
+from .common import PAGE_CLIP, PAGE_COLOR, PAGE_MONTAGE, PAGE_PROJECTS, TAB_EFFECTS  # noqa: F401  (ri-esportate per i test)
 from .win_build import BuildMixin
 from .win_system import SystemMixin
 from .win_bin import BinMixin
@@ -187,6 +187,7 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
     def _playing_changed(self, playing):
         src = self.engine.mode == "source"
         self.play_btn.setText("❚❚" if playing and not src else "▶")
+        self.color_page.play_btn.setText("❚❚" if playing and not src else "▶")
         self.src_play_btn.setText("❚❚" if playing and src else "▶")
 
     def _stretch_toggled(self, on):
@@ -258,7 +259,8 @@ class MainWindow(QMainWindow, BuildMixin, SystemMixin, BinMixin, TimelineMixin, 
             self.source_bar.set_position(t)
         else:
             self.tc_label.setText(tc(t, fps))
-            ctx = self._anim_context() if self.right_tabs.currentIndex() == TAB_COLOR else None
+            self.color_page.tc_label.setText(tc(t, fps))
+            ctx = self._anim_context() if self.page == PAGE_COLOR else None
             if ctx is not None:
                 self.color_panel.set_playhead(t - ctx[0])
             elif self.right_tabs.currentIndex() == TAB_EFFECTS:
